@@ -32,7 +32,7 @@ options = webdriver.ChromeOptions()
 
 # 获取当前文件所在目录的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
-config_keyfile = os.path.join(current_dir, 'IND.ini')
+config_keyfile = os.path.join(current_dir, 'URL.ini')
 # 讀取配置文件
 config.read(config_keyfile, encoding='utf-8')
 ################確認遊戲模板(請輸入 'U1、U2.../V1、V2...')###########################
