@@ -12,6 +12,7 @@ from selenium.common.exceptions import(
 TimeoutException, ElementClickInterceptedException, ElementNotInteractableException, NoSuchElementException, NoSuchWindowException)
 from pathlib import Path
 from colorama import Fore,Style
+from pathlib import Path
 import os, time
 import sys
 import threading
@@ -19,16 +20,23 @@ import configparser
 import pyperclip
 import re
 
+
 # 設定 ChromeOptions 
 config = configparser.ConfigParser()
 # ====== 設定下載路徑 ====== 
-download_path =r"C:\Users\lewis.chiu\Downloads"  #另種寫法 "C:\\Users\howar\Downloads" 或 【自用 r"C:\Users\User\Downloads"】
+#download_path =r"C:\Users\lewis.chiu\Downloads"  #另種寫法 "C:\\Users\howar\Downloads" 或 【自用 r"C:\Users\User\Downloads"】windows系統
+download_path = str(Path.home() / "Downloads")  # Apple 系統
 #r"D:\下載"	✅ 推薦	不用擔心 \ 變跳脫符號
 #"D:\\下載"	✅ 推薦	手動雙斜線跳脫更安全
 #"D:\下載"	❌ 不推薦	萬一剛好有 \t、\n、\r 很容易踩坑
 
 # ====== 初始化 Chrome Driver ======
 options = webdriver.ChromeOptions()
+options.add_argument("--disable-infobars")
+options.add_argument("--disable-notifications")
+options.add_argument("--disable-popup-blocking")
+options.add_experimental_option("excludeSwitches", ["enable-automation"])
+options.add_experimental_option("useAutomationExtension", False)
 
 # 获取当前文件所在目录的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +45,7 @@ config_keyfile = os.path.join(current_dir, 'URL.ini')
 config.read(config_keyfile, encoding='utf-8')
 ################確認遊戲模板(請輸入 'U1、U2.../V1、V2...')###########################
 ui_version = 'IN'
-product_numbers = ['INPV6']
+product_numbers = ['INV6']
 ################確認帳號#######################################
 phone='8888888888' #for 登入
 # 初始化Chrome浏览器
