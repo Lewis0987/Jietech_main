@@ -9,7 +9,8 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import( 
-TimeoutException, ElementClickInterceptedException, ElementNotInteractableException, NoSuchElementException, NoSuchWindowException)
+TimeoutException, ElementClickInterceptedException, ElementNotInteractableException, 
+NoSuchElementException, NoSuchWindowException,StaleElementReferenceException)
 from pathlib import Path
 from colorama import Fore,Style
 from pathlib import Path
@@ -530,7 +531,7 @@ try:
     else:
         banner_alts = ['0_NEW_PAYMENT_GUIDE', '1_FIRST_CHARGE', '2_PIGGY_BANK', '3_ENTER_GAME', '4_TEAM_CLUB', '5_CHARGE_WHEEL','6_INVITE_WHEEL', '7_GIFT_CODE', '8_VIP', '9_PIGGY_BANK']
         alt_names = { 
-        '0_NEW_PAYMENT_GUIDE': '💰 新支付指南',
+        '0_NEW_PAYMENT_GUIDE': '💰 新支付指南', #  0_NEW_PAYMENT_GUIDE 正式環境
         '1_FIRST_CHARGE': '💎 首儲活動',
         '2_PIGGY_BANK': '🐷 虧損反水',
         '3_ENTER_GAME': '✈️ 飛機遊戲',
@@ -541,7 +542,6 @@ try:
         '8_VIP': '👑 VIP專區',
         '9_PIGGY_BANK': '🐷 虧損反水'
     }
-    #  0_NEW_PAYMENT_GUIDE
     running = True  # 控制 while 是否繼續
     error_reported = False   # ⬅️ 新增旗標，避免重複印
     while running: 
@@ -549,6 +549,9 @@ try:
             print(f"\n👉 正在處理 Banner: {alt_text}")
             if alt_text in clicked_banners:
                 continue  # 如果已經點過這個廣告就跳過
+            if alt_text not in driver.page_source:
+                print(f"❌ 頁面沒有此 Banner【{alt_names.get(alt_text, alt_text)}】，直接跳過")
+                continue # 先檢查全部頁面原始碼是否有這個 alt
             try:
                 banner = WebDriverWait(driver, 60).until(
                  EC.element_to_be_clickable((By.XPATH, f"//img[contains(@alt, '{alt_text}')]"))
@@ -602,9 +605,8 @@ try:
                     continue   # 直接跳下一個 Banner
             else:
                 print("沒有錯誤，成功執行！")
-            # 👉 跑完一輪就結束
         print("\033[33m🎉 所有 Banners 已處理完畢，程式結束！\033[0m") 
-        break # 如果 都點過了，就結束
+        break # 如果 都點過了，就結束 👉 跑完一輪就結束
     # ======= 完成檢查 =======
     missing = set(banner_alts) - clicked_banners
     if missing:
