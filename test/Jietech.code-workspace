@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../../VS"
+		},
+		{
+			"path": "../../Crawler-Sample."
 		}
 	]
 }
