@@ -25,8 +25,9 @@ import re
 # 設定 ChromeOptions 
 config = configparser.ConfigParser()
 # ====== 設定下載路徑 ====== 
-#download_path =r"C:\Users\lewis.chiu\Downloads"  #另種寫法 "C:\\Users\howar\Downloads" 或 【自用 r"C:\Users\User\Downloads"】windows系統
-download_path = str(Path.home() / "Downloads")  # Apple 系統
+# download_path =r"C:\Users\lewis.chiu\Downloads"  #另種寫法 "C:\\Users\howar\Downloads" 或 【自用 r"C:\Users\User\Downloads"】windows系統
+download_path = str(Path.home() / "Downloads")  # 動態路徑 windows系統
+# download_path = str(Path.home() / "Downloads")  # Apple 系統
 #r"D:\下載"	✅ 推薦	不用擔心 \ 變跳脫符號
 #"D:\\下載"	✅ 推薦	手動雙斜線跳脫更安全
 #"D:\下載"	❌ 不推薦	萬一剛好有 \t、\n、\r 很容易踩坑
@@ -38,6 +39,13 @@ options.add_argument("--disable-notifications")
 options.add_argument("--disable-popup-blocking")
 options.add_experimental_option("excludeSwitches", ["enable-automation"])
 options.add_experimental_option("useAutomationExtension", False)
+prefs = {
+    "download.default_directory": download_path,
+    "download.prompt_for_download": False,
+    "download.directory_upgrade": True
+}
+options.add_experimental_option("prefs", prefs)
+
 
 # 获取当前文件所在目录的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -322,20 +330,43 @@ try:
             after_files = set(os.listdir(download_path))
             new_files = after_files - before_files
 
-            # 排除還在下載中的檔案
-            completed_files = [f for f in new_files if f.endswith(".apk")] # 刪除【.apk】 檔案
-            '''completed_files = [f for f in new_files if not f.endswith(".crdownload")] ''' # 刪除下載檔案
+            print(f"📂 監控路徑：{download_path}")
+            print(f"📄 目前檔案：{after_files}")
+            print(f"🆕 新增檔案：{new_files}")
+
+            completed_files = [
+                f for f in new_files
+                if f.lower().endswith(".apk")
+            ]
+
             if completed_files:
-                print(f"\033[32m✅ 下載完成：{completed_files}\033[0m")
+                print(f"✅ 下載完成：{completed_files}")
 
                 if auto_delete:
                     for file in completed_files:
-                        try:
-                            os.remove(os.path.join(download_path, file))
-                            print(f"\033[31m🗑️ 已刪除：\033[0m")
-                        except Exception as e:
-                            print(f"\033[91m⚠️ 無法刪除 {file}：{e}\033[0m")
-                return True
+                        os.remove(os.path.join(download_path, file))
+                        print(f"🗑 已刪除：{file}")
+
+                        return True
+
+                if auto_delete:
+                    for file in completed_files:
+                        file_path = os.path.join(download_path, file)
+
+                        for retry in range(5):
+                            try:
+                                os.remove(file_path)
+                                print(f"\033[31m🗑 已刪除：{file}\033[0m")
+                                break
+                            except PermissionError:
+                                print(f"⚠ 檔案仍被占用，等待刪除：{file}")
+                                time.sleep(1)
+                            except FileNotFoundError:
+                                print(f"⚠ 檔案已不存在：{file}")
+                                break
+                            except Exception as e:
+                                print(f"\033[91m⚠ 無法刪除 {file}：{e}\033[0m")
+                                break
             time.sleep(1)
         print("\033[91m❌ 下載失敗或超時\033[0m")
         return False
