@@ -20,6 +20,7 @@
 - Download APK 端到端測試（含下載完成判定與自動清理）
 - Safety L1 破壞性功能保護
 - Recovery 自動回到穩定頁面
+- Stability / Flaky 驗證（連續多輪 Regression 比對）
 
 ---
 
@@ -59,7 +60,8 @@ D:\Jietech
     │
     ├─ tools/                 # 測試產物維護
     │   ├─ cleanup_output.py  # Output Retention 清理（預設 dry-run）
-    │   └─ safety_audit.py    # 測試結果安全稽核（語意判斷，非關鍵字比對）
+    │   ├─ safety_audit.py    # 測試結果安全稽核（語意判斷，非關鍵字比對）
+    │   └─ stability_runner.py # Stability / Flaky 驗證（連續執行既有 Regression）
     │
     ├─ probe/                 # DOM 唯讀探查
     │   ├─ dom_probe.py       # 全站元素盤點 / Banner 輪播取樣 / Popup 佇列快照
@@ -70,7 +72,8 @@ D:\Jietech
         ├─ result_<ts>.csv
         ├─ result_<ts>.json
         ├─ screenshots/       # FAIL 截圖
-        └─ probe/             # DOM Snapshot 與探查結果
+        ├─ probe/             # DOM Snapshot 與探查結果
+        └─ stability/         # Stability 報告（一律保留，不清理）
 ```
 
 - `common/` — Driver / Wait / Popup / Download / Result / Recovery / DOM 等共用工具
@@ -473,15 +476,84 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
 - Lobby Search 的 `img[alt='img_no_results']` **在有結果時也存在於 DOM**，
   判斷 Empty state 必須用文字 `It is empty here.`，不能用該圖片。
 - Lobby Search 的輸入框會過濾底線字元，且 `maxLength=32`。
+- **`W.probe()` 的 clickable 判定**（Phase 11 由 stability run 找出的測試缺陷，已修正）：
+  `WebDriverWait` 預設只忽略 `NoSuchElementException`，
+  React 重繪時 `element_to_be_clickable` 內部丟出的
+  `StaleElementReferenceException` 會直接穿出，
+  讓 `clickable` 在數百毫秒內就被誤判為 `False`。
+  實測案例 `D-8 遊戲分類 ic_original`：整個 case 只花 0.46s 就失敗（正常約 1.7s），
+  且 `found` / `displayed` / `enabled` 全為 `True`。
+  修正方式是把 Stale 列入 `ignored_exceptions`，並讓 clickable 沿用呼叫端的 timeout。
 - `/record` 分頁的 active 標記是內部的 `img[alt='active']`，不是 class token。
   Phase 6~8 使用 class 判斷時 `active` 一直讀不到（顯示 `tab=None`），
   Phase 9 已修正，`H-4` / `H-5` 現在能真正驗證 active 分頁。
 
 ---
 
-## 9. Regression Baseline
+## 9. Stability Test
 
-最後一次完整 Regression（12 個 flow 全部執行）：
+`tools/stability_runner.py` 用來確認 Regression 結果**可重複、可信**。
+
+它**不重複實作任何 Case** —— 只負責連續呼叫既有的 `full_site_test.py`
+（每輪都是全新 Python 行程，因此保證全新 Chrome Driver 與 session），
+再收集、比對、統計各輪的 result JSON。
+
+```bash
+python -m tools.stability_runner --runs 3 --modes headed
+python -m tools.stability_runner --runs 3 --modes headless
+python -m tools.stability_runner --runs 2 --modes headed --flows record   # 快速驗證
+```
+
+### Case 穩定性分類
+
+| 分類 | 定義 |
+|---|---|
+| **STABLE PASS** | 每輪都 PASS |
+| **STABLE FAIL** | 每輪都 FAIL，且 `error_type` 一致 —— 代表**缺陷可穩定重現**，不是 Flaky |
+| **STABLE SKIP** | 每輪都 SKIP，且原因一致 |
+| **FLAKY** | 跨輪狀態不一致，或同樣 FAIL 但失敗原因不同 |
+| **SLOW** | `MAX` 明顯高於 `AVG`（只標記，不判 FAIL） |
+
+Popup 是佇列式彈出，各輪出現的種類與順序本來就可能不同；
+只要未出現者依規則正常 SKIP，就**不視為測試不穩**。
+
+Search 結果數量會隨網站遊戲清單變動，因此**不寫死結果數量**，
+只驗證「至少一筆符合關鍵字 + 搜尋功能正常」。
+
+### 報告
+
+輸出到 `test/output/stability/`：
+
+- `stability_<ts>.csv` —— 每輪每個 Case 一列（mode / run / case / status / elapsed / error / classification）
+- `stability_<ts>.json` —— 完整彙整，含每 Case 的 AVG / MIN / MAX 與分類理由
+
+原始的 `result_*.csv` / `result_*.json` **不會被覆蓋**。
+`cleanup_output.py` 會把 `output/stability/` 一律標記為 KEEP，不參與清理。
+
+每輪結束後會直接呼叫既有的 `tools/safety_audit.py`，不另建第二套稽核。
+
+### 最新 Stability Baseline
+
+**Headed × 3 + Headless × 3（共 6 次 Full Regression，每輪 135 Cases）**
+
+```
+每輪結果   : PASS 104 / FAIL 2 / SKIP 29（6 輪完全一致）
+STABLE PASS: 104
+STABLE FAIL: 2   （C-00、I-00 —— 網站缺陷可穩定重現）
+STABLE SKIP: 29
+FLAKY      : 0
+SLOW       : 0
+Safety Audit: 6 輪皆 PASS，違規 0
+Downloads 殘留: 0
+```
+
+單輪耗時：Headed 362.91 ~ 389.49s、Headless 354.25 ~ 369.38s。
+
+---
+
+## 10. Regression Baseline
+
+最後一次完整 Regression（12 個 flow 全部執行；取 Stability 驗證的最後一輪）：
 
 **Headed**
 
@@ -490,7 +562,7 @@ Total : 135
 PASS  : 104
 FAIL  : 2
 SKIP  : 29
-Time  : 359.88s
+Time  : 370.72s
 Result: FAIL
 ```
 
@@ -501,7 +573,7 @@ Total : 135
 PASS  : 104
 FAIL  : 2
 SKIP  : 29
-Time  : 332.28s
+Time  : 369.38s
 Result: FAIL
 ```
 
@@ -511,7 +583,7 @@ Result: FAIL
 
 ---
 
-## 10. 開發原則
+## 11. 開發原則
 
 - `IN【V6】.py` 為原始參考腳本，**不直接修改**
 - `URL.ini` **不因自動化重構而修改**

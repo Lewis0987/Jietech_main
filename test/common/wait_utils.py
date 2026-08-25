@@ -130,10 +130,25 @@ def is_displayed(driver, locator, timeout=0):
         return False
 
 
-def probe(driver, locator, timeout=SHORT_TIMEOUT):
+def probe(driver, locator, timeout=SHORT_TIMEOUT, clickable_timeout=None):
     """破壞性元素專用：只驗證 found / displayed / enabled / clickable，不點擊。
 
     回傳 dict：{found, displayed, enabled, clickable, text, tag}
+
+    clickable 判定的兩個穩定性修正（Phase 11 由 stability run 找出）：
+
+    1. WebDriverWait 預設只忽略 NoSuchElementException。
+       React 重繪時 element_to_be_clickable 內部會丟
+       StaleElementReferenceException，該例外會直接穿出、
+       讓 clickable 在幾百毫秒內就被判成 False。
+       實測案例：D-8 遊戲分類在前一個分類點擊造成列表重繪後，
+       整個 case 只花 0.46s 就失敗（正常約 1.7s），
+       且 found / displayed / enabled 全為 True。
+       -> 明確把 Stale 列入 ignored_exceptions，讓它在時間窗內重試。
+
+    2. 舊版 clickable 固定只等 1 秒，即使呼叫端傳入較長的 timeout 也一樣，
+       造成「presence 等 3 秒、clickable 只等 1 秒」的不一致。
+       -> 預設改為沿用呼叫端的 timeout，必要時可用 clickable_timeout 覆寫。
     """
     info = {"found": False, "displayed": False, "enabled": False,
             "clickable": False, "text": "", "tag": ""}
@@ -150,8 +165,13 @@ def probe(driver, locator, timeout=SHORT_TIMEOUT):
             info[key] = fn()
         except Exception:
             pass
+    ct = timeout if clickable_timeout is None else clickable_timeout
     try:
-        WebDriverWait(driver, 1).until(EC.element_to_be_clickable(locator))
+        WebDriverWait(
+            driver, max(1, ct),
+            ignored_exceptions=(StaleElementReferenceException,
+                                NoSuchElementException),
+        ).until(EC.element_to_be_clickable(locator))
         info["clickable"] = True
     except SOFT_EXCEPTIONS:
         pass

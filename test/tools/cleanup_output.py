@@ -60,6 +60,7 @@ RE_SNAPSHOT = re.compile(r"^snapshot_(.+)_%s\.json$" % TS)
 RE_PROBE = re.compile(r"^probe_%s\.json$" % TS)
 RE_DEEP = re.compile(r"^deep_%s\.json$" % TS)
 RE_SHOT = re.compile(r"^FAIL_.+_\d{6}\.png$")
+RE_STABILITY = re.compile(r"^stability_%s\.(csv|json)$" % TS)
 
 # 已知但不屬於測試產物、也不該刪的檔案
 PROTECTED_NAMES = {".gitignore"}
@@ -154,6 +155,12 @@ def _classify(root, path):
             return "result", m.group(1), m.group(2)
         return None, None, None
 
+    if rel_dir == "stability":
+        # Stability 證據一律保留，不設刪除規則
+        if RE_STABILITY.match(name):
+            return "stability", None, None
+        return None, None, None
+
     if rel_dir == "screenshots":
         if RE_SHOT.match(name):
             return "screenshot", None, None
@@ -218,6 +225,10 @@ def build_plan(root, keep_results=KEEP_RESULTS, keep_snapshots=KEEP_SNAPSHOTS,
         if category == "protected":
             items.append(Item(path, "protected", None, size, KEEP,
                               "受保護檔案，不處理"))
+            continue
+        if category == "stability":
+            items.append(Item(path, "stability", None, size, KEEP,
+                              "Stability 驗證證據，一律保留不刪除"))
             continue
 
         if category == "result":
