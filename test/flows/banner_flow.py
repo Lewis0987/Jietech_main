@@ -162,12 +162,15 @@ def run(ctx):
                    info["img_slides"], info["max_img_h"]))
         if int(info["img_slides"]) > 0 and int(info["max_img_h"]) <= 0:
             collapsed = True
+            suspect = "min-h-max]" if "min-h-max]" in info.get("swiper_cls", "") else ""
             raise AssertionError(
-                "Banner 區塊塌陷：%s 個含圖 slide 的圖片高度全部為 0"
-                "（輪播容器僅 %spx），圖片已載入 DOM 但畫面上完全不可見、"
-                "使用者無法點擊。疑似網站 CSS 拼寫錯誤：swiper class 含 %r"
-                "（多一個右中括號，Tailwind 無法產生 min-height）"
-                % (info["img_slides"], info["swiper_h"], "min-h-max]"))
+                "【已確認現象】Banner DOM 與圖片存在（%s 格 slide、%s 個含圖），"
+                "圖片已載入完成，但渲染高度為 0（輪播容器僅 %spx），"
+                "使用者畫面實際看不到、也無法點擊。"
+                "【疑似原因】swiper class 中出現 %r，疑似 Tailwind class 拼寫異常"
+                "導致高度規則未生效——尚未經修改前後驗證，僅為推測。"
+                % (info["dom_slides"], info["img_slides"], info["swiper_h"],
+                   suspect or info.get("swiper_cls", "")[:60]))
 
     if total <= 0:
         with ctx.case("C-99", "Banner 流程收尾") as c:

@@ -235,6 +235,56 @@ def attr_of(driver, locator, name, timeout=SHORT_TIMEOUT, default=""):
         return default
 
 
+# ------------------------------------------------------------------ Toast
+# Toast 只是輔助性的 Post-condition：
+#   * 抓到 -> 記錄下來，讓報告更有資訊
+#   * 沒抓到 -> 不是錯誤，絕對不可因此判 FAIL
+# 除非某個功能的規格明確要求一定要有 toast，才由該 case 自行 assert。
+_TOAST_JS = r"""
+const t = s => (s || '').toString().replace(/\s+/g, ' ').trim();
+const sel = "[class*='adm-toast'],[class*='toast'],[class*='Toast'],"
+          + "[class*='message'],[class*='Message'],[role='alert'],[role='status']";
+const out = [];
+document.querySelectorAll(sel).forEach(e => {
+  const r = e.getBoundingClientRect();
+  const cs = getComputedStyle(e);
+  if (r.width <= 0 || r.height <= 0) return;
+  if (cs.visibility === 'hidden' || cs.display === 'none') return;
+  const text = t(e.innerText);
+  if (!text || text.length > 160) return;
+  out.push({text: text, cls: t(e.className).slice(0, 80)});
+});
+return out;
+"""
+
+
+def catch_toast(driver, timeout=2.0, poll=0.25):
+    """在 timeout 內嘗試捕捉 toast / 提示訊息。
+
+    回傳 {"text":..., "cls":...} 或 None。
+    找不到不是失敗，呼叫端請用 c.note() 記錄即可。
+    """
+    deadline = time.time() + max(0.0, float(timeout))
+    while True:
+        try:
+            hits = driver.execute_script(_TOAST_JS) or []
+        except Exception:
+            return None
+        if hits:
+            return hits[0]
+        if time.time() >= deadline:
+            return None
+        time.sleep(poll)
+
+
+def note_toast(driver, case_ctx, timeout=2.0, prefix="toast"):
+    """便利函式：抓到就記錄，沒抓到就靜靜略過（永遠不拋例外）。"""
+    hit = catch_toast(driver, timeout=timeout)
+    if hit and case_ctx is not None:
+        case_ctx.note("%s：%r" % (prefix, hit["text"][:80]))
+    return hit
+
+
 # ------------------------------------------------------------------ 快捷 locator
 def xp(expr):
     return (By.XPATH, expr)
