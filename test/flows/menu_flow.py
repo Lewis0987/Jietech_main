@@ -36,6 +36,132 @@ VOLUME = (By.CSS_SELECTOR, "img[alt='ic_volume']")
 BACK_ICON = (By.XPATH, "//img[contains(@alt,'ic_back_header')]")
 MODAL = (By.CSS_SELECTOR, "div[class*='z-[1005]']")
 
+# ---------------------------------------------------------------- Lobby Search
+# Phase 10-A 實測：Search 是獨立頁面 /search_game（不是 modal）
+#   input  placeholder='Find your favorite game'、type=text、inputMode=text、maxLength=32
+#          React handlers: onChange / onInput -> 即時搜尋，不需要按 Enter
+#   結果    文字 "Search results for the term “<kw>” are:" + 遊戲卡片（189x265）
+#   空結果  文字 "It is empty here."
+#   ⚠ img[alt='img_no_results'] 在有結果時也存在於 DOM，
+#     因此【不能】用它判斷 Empty state，必須用文字判斷。
+SEARCH_URL_MARK = "/search_game"
+SEARCH_INPUT = (By.CSS_SELECTOR, "input")
+SEARCH_MAXLEN = 32
+# 明確不可能命中的測試字串（無底線——實測底線會被輸入框過濾掉）
+NO_RESULT_QUERY = "QAAUTOMATIONNORESULT202608"
+
+SEARCH_STATE_JS = r"""
+const t = s => (s || '').toString().replace(/\s+/g, ' ').trim();
+const body = t(document.body.innerText);
+const inp = document.querySelector('input');
+const cards = [];
+document.querySelectorAll('img').forEach(e => {
+  const r = e.getBoundingClientRect();
+  if (r.width < 80 || r.height < 110) return;
+  if (e.alt === 'img_no_results') return;
+  let n = e, title = '';
+  for (let i = 0; i < 4 && n; i++) {
+    n = n.parentElement;
+    if (n) { const x = t(n.innerText); if (x && x.length < 40) { title = x; break; } }
+  }
+  cards.push({title: title, w: Math.round(r.width), h: Math.round(r.height)});
+});
+const m = body.match(/Search results for the term\s+[“"]([^”"]*)[”"]/);
+return {
+  url: location.href,
+  value: inp ? inp.value : null,
+  has_input: !!inp,
+  header: !!m,
+  term: m ? m[1] : null,
+  cards: cards.slice(0, 20),
+  count: cards.length,
+  empty: /It is empty here/i.test(body),
+  no_result_img: !!document.querySelector("img[alt='img_no_results']"),
+  body: body.slice(0, 160)
+};
+"""
+
+# 從大廳實際可見的遊戲卡片取得安全關鍵字（唯讀，不點擊）
+LOBBY_GAME_JS = r"""
+const t = s => (s || '').toString().replace(/\s+/g, ' ').trim();
+const out = [];
+document.querySelectorAll('img').forEach(e => {
+  const r = e.getBoundingClientRect();
+  if (r.width < 150 || r.height < 200) return;
+  let n = e, title = '';
+  for (let i = 0; i < 4 && n; i++) {
+    n = n.parentElement;
+    if (n) { const x = t(n.innerText); if (x && x.length < 30) { title = x; break; } }
+  }
+  if (title) out.push(title);
+});
+return [...new Set(out)];
+"""
+
+
+def _search_state(driver):
+    try:
+        return driver.execute_script(SEARCH_STATE_JS) or {}
+    except Exception:
+        return {}
+
+
+def _at_search(driver):
+    try:
+        return SEARCH_URL_MARK in (driver.current_url or "")
+    except Exception:
+        return False
+
+
+def _open_search(ctx):
+    """從大廳開啟 Search 頁。"""
+    W, cfg = ctx.W, ctx.config
+    driver = ctx.driver
+    if _at_search(driver):
+        return True
+    if not ctx.R.at_home(driver):
+        ctx.go_home()
+    ctx.P.close_all(driver)
+    target = SEARCH_BTN if W.exists(driver, SEARCH_BTN, 0) else SEARCH_ICON
+    try:
+        W.safe_click(driver, target, timeout=cfg.T_NORMAL)
+        W.settle(1.4)
+        W.wait_ready(driver, timeout=cfg.T_NORMAL)
+    except W.SOFT_EXCEPTIONS:
+        return False
+    return _at_search(driver)
+
+
+def _close_search(ctx, c=None):
+    """離開 Search 頁回大廳。"""
+    W = ctx.W
+    driver = ctx.driver
+    if W.exists(driver, BACK_ICON, 0):
+        try:
+            W.safe_click(driver, BACK_ICON, timeout=ctx.config.T_SHORT)
+            W.settle(1.2)
+            if c is not None:
+                c.action("使用站內返回 icon 離開 Search")
+        except W.SOFT_EXCEPTIONS:
+            pass
+    if not ctx.R.at_home(driver):
+        ctx.go_home()
+    return ctx.R.at_home(driver)
+
+
+def _lobby_keyword(ctx):
+    """唯讀取得一個大廳實際存在的遊戲名稱，作為安全搜尋關鍵字。"""
+    driver = ctx.driver
+    try:
+        titles = driver.execute_script(LOBBY_GAME_JS) or []
+    except Exception:
+        titles = []
+    for title in titles:
+        word = title.split()[0] if title.split() else ""
+        if 3 <= len(word) <= 20 and word.replace("'", "").isalnum():
+            return word, title
+    return None, None
+
 # D-2 ~ D-5：底部導覽（需要輸出內頁 snapshot 的標記為 snapshot=True）
 NAV_CASES = [
     ("D-2", "PROMO 活動", "ic_activity", "promo", True),
@@ -339,6 +465,175 @@ def run(ctx):
         if not ctx.R.strong_anchor_found(driver, timeout=cfg.T_SHORT):
             raise AssertionError("關閉 Search 後未回到大廳")
         c.check("已關閉 Search 並回到大廳")
+
+    # ========================================================= D-13-1 ~ D-13-5
+    # Lobby Search 完整 E2E（Phase 10）。Search 本身為 L2 可逆；
+    # 搜尋結果中的遊戲一律【只讀驗證、零點擊】，不啟動任何遊戲。
+    keyword, full_title = None, None
+
+    with ctx.case("D-13-1", "Search 正常關鍵字（由大廳實際遊戲取得）") as c:
+        if not _back_home(ctx, c):
+            c.skip("無法回到大廳")
+        P.close_all(driver)
+        W.settle(0.8)
+
+        keyword, full_title = _lobby_keyword(ctx)
+        if not keyword:
+            c.skip("大廳讀不到可用的遊戲名稱，無法取得安全關鍵字")
+        c.found("由大廳實際遊戲取得關鍵字：%r（完整名稱 %r）" % (keyword, full_title))
+
+        if not _open_search(ctx):
+            c.skip("無法開啟 Search 頁")
+        c.action("已開啟 Search：%s" % driver.current_url)
+
+        attrs = driver.execute_script(
+            "const e=document.querySelector('input');"
+            "return e?{type:e.type,inputMode:e.inputMode,placeholder:e.placeholder,"
+            "maxLength:e.maxLength}:null;")
+        c.check("input 屬性：%s" % attrs)
+
+        value = W.type_text(driver, SEARCH_INPUT, keyword, timeout=cfg.T_NORMAL)
+        c.action("已逐字輸入關鍵字（共用 W.type_text）")
+        if value != keyword:
+            raise AssertionError("輸入值不符：預期 %r，實際 %r" % (keyword, value))
+        c.check("input value = %r" % value)
+
+        W.settle(2.0)
+        W.note_toast(driver, c)
+        st = _search_state(driver)
+        if not st.get("header"):
+            raise AssertionError("找不到搜尋結果標題（Search results for the term …）")
+        c.check("結果標題 term = %r" % st.get("term"))
+        if st.get("count", 0) < 1:
+            raise AssertionError("關鍵字 %r 沒有任何結果（預期至少 1 筆）" % keyword)
+        c.check("結果數量 = %d" % st["count"])
+        titles = [x["title"] for x in st.get("cards", [])]
+        c.check("結果標題：%s" % titles[:8])
+        if not any(keyword.lower() in (t or "").lower() for t in titles):
+            raise AssertionError("結果中找不到含關鍵字 %r 的遊戲：%s" % (keyword, titles))
+        c.check("至少一筆結果標題含關鍵字，搜尋結果正確")
+        c.note("[SAFE] 只讀驗證結果，未點擊任何遊戲卡片")
+
+    with ctx.case("D-13-2", "Search 部分關鍵字與大小寫") as c:
+        if not keyword:
+            c.skip("沒有可用關鍵字")
+        if not _open_search(ctx):
+            c.skip("無法開啟 Search 頁")
+
+        partial = keyword[:max(3, len(keyword) // 2)]
+        W.clear_input(driver, SEARCH_INPUT, timeout=cfg.T_NORMAL)
+        W.type_text(driver, SEARCH_INPUT, partial, timeout=cfg.T_NORMAL)
+        W.settle(2.0)
+        st_partial = _search_state(driver)
+        c.found("部分關鍵字 %r -> 結果 %d 筆" % (partial, st_partial.get("count", 0)))
+        if st_partial.get("count", 0) < 1:
+            raise AssertionError("部分關鍵字 %r 沒有任何結果" % partial)
+        c.check("部分關鍵字可搜尋，結果：%s"
+                % [x["title"] for x in st_partial.get("cards", [])][:6])
+
+        upper = keyword.upper()
+        W.clear_input(driver, SEARCH_INPUT, timeout=cfg.T_NORMAL)
+        W.type_text(driver, SEARCH_INPUT, upper, timeout=cfg.T_NORMAL)
+        W.settle(2.0)
+        st_upper = _search_state(driver)
+        c.check("大寫 %r -> 結果 %d 筆" % (upper, st_upper.get("count", 0)))
+        if st_upper.get("count", 0) < 1:
+            raise AssertionError("大寫關鍵字 %r 沒有任何結果" % upper)
+        c.check("搜尋為大小寫不敏感")
+
+    with ctx.case("D-13-3", "Search Empty State（不存在的關鍵字）") as c:
+        if not _open_search(ctx):
+            c.skip("無法開啟 Search 頁")
+
+        W.clear_input(driver, SEARCH_INPUT, timeout=cfg.T_NORMAL)
+        value = W.type_text(driver, SEARCH_INPUT, NO_RESULT_QUERY, timeout=cfg.T_NORMAL)
+        c.action("已輸入不可能命中的測試字串（%d 碼，maxLength=%d）"
+                 % (len(NO_RESULT_QUERY), SEARCH_MAXLEN))
+        c.check("input value = %r" % value)
+        W.settle(2.2)
+        W.note_toast(driver, c)
+
+        st = _search_state(driver)
+        c.check("結果數量 = %d，Empty 文字 = %s" % (st.get("count", 0), st.get("empty")))
+        if st.get("count", 0) != 0:
+            raise AssertionError("不存在的關鍵字卻有 %d 筆結果：%s"
+                                 % (st["count"], [x["title"] for x in st.get("cards", [])]))
+        if not st.get("empty"):
+            raise AssertionError("結果為 0 筆但沒有顯示 Empty state（It is empty here.）")
+        c.check("正確顯示 Empty state（It is empty here.）— 0 筆結果屬正常，非失敗")
+        c.note("img_no_results 在有結果時也存在於 DOM，因此以文字判斷 Empty state")
+
+    with ctx.case("D-13-4", "Search Clear 與結果還原") as c:
+        if not _open_search(ctx):
+            c.skip("無法開啟 Search 頁")
+
+        before = _search_state(driver)
+        if not before.get("value"):
+            W.type_text(driver, SEARCH_INPUT, NO_RESULT_QUERY, timeout=cfg.T_NORMAL)
+            W.settle(1.5)
+            before = _search_state(driver)
+        c.found("清除前 value=%r 結果=%d" % (before.get("value"), before.get("count", 0)))
+
+        cleared = W.clear_input(driver, SEARCH_INPUT, timeout=cfg.T_NORMAL)
+        c.action("已清空搜尋框（共用 W.clear_input）")
+        if cleared:
+            raise AssertionError("搜尋框未清空，殘留 %r" % cleared)
+        W.settle(1.8)
+
+        after = _search_state(driver)
+        c.check("清除後 value=%r" % after.get("value"))
+        if after.get("value"):
+            raise AssertionError("清除後 value 仍為 %r" % after.get("value"))
+        if after.get("header"):
+            raise AssertionError("清除後仍顯示搜尋結果標題")
+        if after.get("count", 0) != 0:
+            raise AssertionError("清除後仍有 %d 筆結果" % after["count"])
+        c.check("已回到 Search 預設狀態（無結果標題、無卡片）")
+        c.note("預設頁面內容：%s" % (after.get("body") or "")[:60])
+
+    with ctx.case("D-13-5", "Search 結果遊戲只讀驗證 + 關閉 Search") as c:
+        if not keyword:
+            c.skip("沒有可用關鍵字")
+        if not _open_search(ctx):
+            c.skip("無法開啟 Search 頁")
+
+        W.clear_input(driver, SEARCH_INPUT, timeout=cfg.T_NORMAL)
+        W.type_text(driver, SEARCH_INPUT, keyword, timeout=cfg.T_NORMAL)
+        W.settle(2.0)
+        st = _search_state(driver)
+        if st.get("count", 0) < 1:
+            c.skip("此次搜尋沒有結果，無法做結果驗證")
+        c.found("結果 %d 筆" % st["count"])
+
+        for card in st.get("cards", [])[:8]:
+            c.check("[L1 只讀不點擊] %r %sx%s"
+                    % (card.get("title"), card.get("w"), card.get("h")))
+
+        for name in ("Play", "Enter", "Start"):
+            pr = W.probe(driver, W.by_button_text(name), timeout=1)
+            if pr["found"]:
+                c.check("[SAFE-L1] %s 存在但未點擊 displayed=%s enabled=%s"
+                        % (name, pr["displayed"], pr["enabled"]))
+        c.note("[SAFE-L1] 全程未點擊任何遊戲卡片，未啟動任何遊戲")
+
+        # Recovery：清空 -> 關閉 Search -> 回大廳
+        W.clear_input(driver, SEARCH_INPUT, timeout=cfg.T_NORMAL)
+        W.settle(1.0)
+        residual = _search_state(driver).get("value")
+        if residual:
+            raise AssertionError("離開前搜尋框仍殘留 %r" % residual)
+        c.action("已清空搜尋框")
+
+        if not _close_search(ctx, c):
+            raise AssertionError("無法從 Search 頁回到大廳")
+        if not ctx.R.strong_anchor_found(driver, timeout=cfg.T_SHORT):
+            raise AssertionError("回到大廳後找不到結構性錨點")
+        c.check("已回到大廳並命中錨點：%s" % ctx.R.found_anchors(driver)[:3])
+        if len(driver.window_handles) != 1:
+            raise AssertionError("結束時分頁數不為 1")
+        if W.exists(driver, MODAL, 0):
+            raise AssertionError("結束時仍有殘留 modal")
+        c.check("無殘留 Search 頁 / modal / 額外分頁")
 
     # ============================================================== D-14 跑馬燈
     with ctx.case("D-14", "公告跑馬燈") as c:

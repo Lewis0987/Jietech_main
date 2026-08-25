@@ -90,7 +90,7 @@ D:\Jietech
 | **[A]** | `popup` | Subscribe / 充值大輪盤 / 首充 / 任務中心 / 俱樂部 / Telegram / Jackpot，佇列式逐一關閉 | 9 | 只關閉 popup，不點任何活動按鈕 |
 | **[B]** | `header` | Download APK 端到端、下載列關閉、充值輪盤、Mail 信箱 | 4 | 輪盤頁的 Deposit / SPIN 只驗證 |
 | **[C]** | `banner` | 首頁 Banner 輪播（`data-swiper-slide-index` 定位，Swiper API 逐格控制） | 12 | Collect / SPIN / Deposit 只驗證 |
-| **[D]** | `menu` | TabBar HOME / PROMO / 邀請轉盤 / EARN / MINE、7 個遊戲分類、Search、公告跑馬燈、`ic_volume` | 15 | 不點遊戲卡片；音量類操作需可還原 |
+| **[D]** | `menu` | TabBar HOME / PROMO / 邀請轉盤 / EARN / MINE、7 個遊戲分類、**Lobby Search 完整 E2E**、公告跑馬燈、`ic_volume` | 20 | 不點遊戲卡片、不啟動遊戲；音量類操作需可還原 |
 | **[E]** | `safety` | Deposit / Withdraw / First Deposit / LiveChat / 首充金額 / checkbox / Collect / SPIN / Submit / Redeem | 14 | **全部 L1，零點擊** |
 | **[F]** | `mine` | My info / Mission / Balance details / Live support / Gifts / Join our community / Download App / Refresh / Logout | 11 | Live support、Download App、Logout 為 L1 |
 | **[G]** | `account` | Avatar / Nickname / Gender（開關 modal）、Player ID / 邀請碼（唯讀）、綁定手機 / 登入密碼 / 綁定邀請碼（L1） | 10 | 測試前後比對全部欄位，確認資料未變 |
@@ -131,6 +131,7 @@ D:\Jietech
 - Team Club 的 Invite Now!（導向未經探查確認，依原則維持 L1）
 - `/share` 的 Copy Link（會修改剪貼簿）與 Save Picture（會產生下載檔）
 - Subordinate Data 日期選擇器的 Confirm（會改變查詢條件；只用 Cancel 關閉）
+- 搜尋結果中的遊戲卡片與 `Play` / `Enter` / `Start`（不啟動任何遊戲）
 - Telegram / WhatsApp 等外部連結
 
 L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
@@ -143,7 +144,7 @@ L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
 - Tab 切換（Detail / Withdrawal）
 - Filter 篩選（All / Income / Expense）
 - 遊戲分類切換
-- Search 開啟 / 關閉
+- Lobby Search 開啟 / 輸入 / 清空 / 關閉（`/search_game`）
 - Modal 開啟 / 關閉（Avatar / Nickname / Gender / Gifts）
 - Team Club 分頁切換與 Rebate 輪播（左右各一次後還原）
 - Subordinate Data 的 Tier 篩選、排序切換、搜尋輸入（測試字串，事後清空還原）
@@ -151,6 +152,47 @@ L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
 
 `config.SAFE_LEVEL` 預設為 `1`；`config.assert_safe()` 會在正式環境
 （`INPV6`、`7IND`）強制拒絕提高等級。
+
+### Lobby Search E2E（`D-13` ~ `D-13-5`）
+
+Search 是**獨立頁面** `/search_game`（不是 modal），入口是大廳的 `Search` 按鈕。
+
+| 項目 | 實測結果 |
+|---|---|
+| input | `placeholder='Find your favorite game'`、`type=text`、`inputMode=text`、**`maxLength=32`** |
+| 觸發方式 | React `onChange` / `onInput` -> **即時搜尋，不需要按 Enter** |
+| 結果標題 | `Search results for the term “<keyword>” are:` |
+| 結果卡片 | 遊戲圖 189×265 + 標題 |
+| Empty state | 文字 `It is empty here.` |
+| 返回 | `img[alt='ic_back_header']` |
+
+涵蓋的 Case：
+
+| Case | 內容 |
+|---|---|
+| `D-13` | 開啟 Search UI、確認 input 出現 |
+| `D-13-1` | **正常關鍵字**：關鍵字由大廳實際可見的遊戲名稱動態取得（不寫死、不猜遊戲名），驗證結果標題、結果數量、結果標題含關鍵字 |
+| `D-13-2` | **部分關鍵字 + 大小寫**：前半段關鍵字可搜到更多結果；大寫關鍵字結果相同 -> 大小寫不敏感 |
+| `D-13-3` | **Empty state**：輸入不可能命中的測試字串，驗證結果 0 筆且顯示 `It is empty here.` |
+| `D-13-4` | **Clear**：`W.clear_input()` 清空後 value 為空、結果標題消失、卡片歸零 |
+| `D-13-5` | **結果只讀驗證 + Recovery**：列出結果卡片但**零點擊**，清空搜尋框、返回大廳、驗證錨點/分頁數/無殘留 modal |
+
+兩個實作重點：
+
+- **`img[alt='img_no_results']` 在有結果時也存在於 DOM**，不能用它判斷 Empty state，必須用文字判斷。
+- 輸入框會**過濾底線**（`QA_AUTOMATION_...` 會變成 `QAAUTOMATION...`），因此測試字串不含底線。
+
+輸入一律共用 `W.type_text()` / `W.clear_input()`，未在 flow 內另寫 `send_keys` / `clear()`。
+
+### ⚠ 搜尋結果的遊戲一律零點擊
+
+Search 本身是 **L2**（可逆導覽），但**搜尋結果中的遊戲是 L1**：
+
+- 只驗證 Found / Displayed / 標題 / 結果數量
+- **不點擊遊戲卡片、不啟動遊戲、不進入 Provider、不開遊戲 iframe**
+- 若結果頁出現 `Play` / `Enter` / `Start`，一律只驗證存在，標記 `[SAFE-L1]`
+
+Phase 10 的目的是測「搜尋功能」，不是「遊戲啟動」。
 
 ### ⚠ Withdrawal Record Tab ≠ Withdraw
 
@@ -428,6 +470,9 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
   （Detail 與 Withdrawal Record 兩個分頁、捲動到底皆已確認）。
   因此不建立對應 Case；`H-6` 會持續盤點這些控制項數量，
   一旦網站新增即可從 `H-6` 的輸出發現並補測。
+- Lobby Search 的 `img[alt='img_no_results']` **在有結果時也存在於 DOM**，
+  判斷 Empty state 必須用文字 `It is empty here.`，不能用該圖片。
+- Lobby Search 的輸入框會過濾底線字元，且 `maxLength=32`。
 - `/record` 分頁的 active 標記是內部的 `img[alt='active']`，不是 class token。
   Phase 6~8 使用 class 判斷時 `active` 一直讀不到（顯示 `tab=None`），
   Phase 9 已修正，`H-4` / `H-5` 現在能真正驗證 active 分頁。
@@ -441,22 +486,22 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
 **Headed**
 
 ```
-Total : 130
-PASS  : 99
+Total : 135
+PASS  : 104
 FAIL  : 2
 SKIP  : 29
-Time  : 312.05s
+Time  : 359.88s
 Result: FAIL
 ```
 
 **Headless**
 
 ```
-Total : 130
-PASS  : 99
+Total : 135
+PASS  : 104
 FAIL  : 2
 SKIP  : 29
-Time  : 308.29s
+Time  : 332.28s
 Result: FAIL
 ```
 
@@ -495,3 +540,4 @@ Result: FAIL
 - Phase 8 Subordinate Data                                    查詢功能 (建立「輸入、搜尋、篩選」能力。)
 - Phase 9 既有功能深度補強                                     主要鎖定 /record
 - Phase 10 Search Input                                       Result → Empty → Clear → Recovery 的完整 E2E
+- Phase 11 自動化測試穩定性 / Flaky Test 驗證                   重複、穩定測試
