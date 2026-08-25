@@ -410,6 +410,20 @@ def run(ctx):
             ".filter(b=>/Invite Now/.test(b.innerText)).length;")
         _l1(ctx, c, "Invite Now!", INVITE_NOW, "導向未經探查確認，依原則維持 L1")
         c.check("此分頁共有 %s 個 Invite Now! 按鈕" % count)
+        # 唯讀安全分析：嘗試從 React fiber 讀取 onClick 判斷導向
+        src = driver.execute_script(r"""
+        const t = s => (s || '').toString().replace(/\s+/g, ' ').trim();
+        const b = [...document.querySelectorAll('button')]
+          .find(x => /Invite Now/.test(t(x.innerText)));
+        if (!b) return null;
+        for (const k of Object.keys(b)) {
+          if (k.startsWith('__reactProps$')) {
+            const p = b[k];
+            if (p && typeof p.onClick === 'function') return p.onClick.toString().slice(0, 120);
+          }
+        }
+        return null;""")
+        c.check("onClick 原始碼：%r（已 minify，無法唯讀判斷導向）" % (src or "(讀不到)"))
         _ensure_tab(ctx, "My Rewards")
 
     # ============================================================== K-11 Invite your friends

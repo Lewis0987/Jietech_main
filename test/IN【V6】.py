@@ -25,8 +25,10 @@ import re
 # 設定 ChromeOptions 
 config = configparser.ConfigParser()
 # ====== 設定下載路徑 ====== 
-# download_path =r"C:\Users\lewis.chiu\Downloads"  #另種寫法 "C:\\Users\howar\Downloads" 或 【自用 r"C:\Users\User\Downloads"】windows系統
-download_path = str(Path.home() / "Downloads")  # 動態路徑 windows系統
+# download_path =r"C:\Users\lewis.chiu\Downloads"  #固定另種寫法 "C:\\Users\howar\Downloads" 或 【自用 r"C:\Users\User\Downloads"】windows系統
+download_dir = Path.home() / "Downloads"        # 動態路徑 windows系統
+download_dir.mkdir(parents=True, exist_ok=True)
+download_path = str(download_dir)
 # download_path = str(Path.home() / "Downloads")  # Apple 系統
 #r"D:\下載"	✅ 推薦	不用擔心 \ 變跳脫符號
 #"D:\\下載"	✅ 推薦	手動雙斜線跳脫更安全
@@ -324,16 +326,15 @@ try:
     # ====== 等待檔案出現 ======
     def wait_for_download(download_path, before_files, timeout=20, auto_delete=True):
         print("📂 等待下載完成...")
-
         start_time = time.time()
+
+        # 監控檔案下載路徑
         while time.time() - start_time < timeout:
             after_files = set(os.listdir(download_path))
             new_files = after_files - before_files
-
             print(f"📂 監控路徑：{download_path}")
             print(f"📄 目前檔案：{after_files}")
             print(f"🆕 新增檔案：{new_files}")
-
             completed_files = [
                 f for f in new_files
                 if f.lower().endswith(".apk")
@@ -348,7 +349,6 @@ try:
                         print(f"🗑 已刪除：{file}")
 
                         return True
-
                 if auto_delete:
                     for file in completed_files:
                         file_path = os.path.join(download_path, file)

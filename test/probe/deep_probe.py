@@ -81,6 +81,14 @@ def goto_teamclub(drv, home_url):
     return drv.current_url
 
 
+def goto_subordinate(drv, home_url):
+    """大廳 -> TabBar EARN -> Club Stars Detail（/subordinateData）。"""
+    _goto_hall(drv, home_url)
+    _click(drv, EARN_ICON)
+    _click(drv, W.xp("(//button[normalize-space(.)='Detail'])[1]"))
+    return drv.current_url
+
+
 def goto_task_center(drv, home_url):
     """大廳 -> MINE -> Mission（/task_center）。"""
     _goto_hall(drv, home_url)
@@ -95,6 +103,7 @@ TARGETS = [
     ("activity", goto_activity),
     ("task_center", goto_task_center),
     ("teamclub", goto_teamclub),
+    ("subordinate", goto_subordinate),
 ]
 
 

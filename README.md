@@ -7,7 +7,7 @@
 
 目前架構已實作並實測的能力：
 
-- 全站主要功能測試（首頁 Popup / Header / Banner / 導覽選單 / 個人中心 / 帳號 / 帳變明細 / 活動 / 任務中心 / 團隊俱樂部）
+- 全站主要功能測試（首頁 Popup / Header / Banner / 導覽選單 / 個人中心 / 帳號 / 帳變明細 / 活動 / 任務中心 / 團隊俱樂部 / 下級資料查詢）
 - Flow 模組化，可單獨執行或一次執行全部
 - 每個功能一個獨立 Case，做到 Found → Action → Post-condition → Recovery
 - Headed / Headless 兩種模式，逐 Case 結果一致
@@ -54,11 +54,16 @@ D:\Jietech
     │   ├─ record_flow.py     # [H] Balance details 查詢 / 篩選
     │   ├─ promo_flow.py      # [I] PROMO 活動頁
     │   ├─ task_flow.py       # [J] Task Center 安全分類
-    │   └─ earn_flow.py       # [K] EARN / Team Club
+    │   ├─ earn_flow.py       # [K] EARN / Team Club
+    │   └─ subordinate_flow.py # [L] Subordinate Data 查詢
+    │
+    ├─ tools/                 # 測試產物維護
+    │   └─ cleanup_output.py  # Output Retention 清理（預設 dry-run）
     │
     ├─ probe/                 # DOM 唯讀探查
     │   ├─ dom_probe.py       # 全站元素盤點 / Banner 輪播取樣 / Popup 佇列快照
-    │   └─ deep_probe.py      # /account /record /activity /task_center /teamClub 可互動元素深度探查
+    │   └─ deep_probe.py      # /account /record /activity /task_center /teamClub
+    │                         #   /subordinateData 可互動元素深度探查
     │
     └─ output/                # 測試產物（已加入 .gitignore）
         ├─ result_<ts>.csv
@@ -70,6 +75,7 @@ D:\Jietech
 - `common/` — Driver / Wait / Popup / Download / Result / Recovery / DOM 等共用工具
 - `flows/` — 各網站功能區的自動化流程，每個模組提供 `run(ctx)`
 - `probe/` — DOM 唯讀探查，用來確認 locator，不做任何功能操作
+- `tools/` — 測試產物維護工具
 - `output/` — CSV / JSON / Screenshot / DOM Snapshot
 
 ---
@@ -91,6 +97,7 @@ D:\Jietech
 | **[I]** | `promo` | `/activity` 活動卡片盤點與逐一驗證 | 12 | Claim / Redeem / Submit / SPIN / Deposit 只驗證 |
 | **[J]** | `task` | Task Center：Claim all + 6 個 Go 的安全分類 | 9 | **全部 L1，零點擊** |
 | **[K]** | `earn` | Team Club：My Rewards / Invite Rewards / Rules 分頁、Club Stars Detail（`/subordinateData`）、說明 icon、Rebate 輪播、Invite your friends（`/share`） | 14 | Claim / Claim all / Invite Now! / Telegram / WhatsApp / Copy Link / Save Picture 全部 L1 |
+| **[L]** | `subordinate` | Subordinate Data：統計顯示、Tier 1~3、Join Time / Commission 排序、日期選擇、Phone Number 搜尋、Empty state | 12 | 只用測試字串查詢；日期只 Cancel 不 Confirm |
 
 ---
 
@@ -122,6 +129,7 @@ D:\Jietech
 - Team Club 的 Claim（實測 `disabled=true`，仍不點擊）
 - Team Club 的 Invite Now!（導向未經探查確認，依原則維持 L1）
 - `/share` 的 Copy Link（會修改剪貼簿）與 Save Picture（會產生下載檔）
+- Subordinate Data 日期選擇器的 Confirm（會改變查詢條件；只用 Cancel 關閉）
 - Telegram / WhatsApp 等外部連結
 
 L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
@@ -137,6 +145,7 @@ L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
 - Search 開啟 / 關閉
 - Modal 開啟 / 關閉（Avatar / Nickname / Gender / Gifts）
 - Team Club 分頁切換與 Rebate 輪播（左右各一次後還原）
+- Subordinate Data 的 Tier 篩選、排序切換、搜尋輸入（測試字串，事後清空還原）
 - Popup 關閉
 
 `config.SAFE_LEVEL` 預設為 `1`；`config.assert_safe()` 會在正式環境
@@ -202,9 +211,10 @@ python full_site_test.py --flows record
 python full_site_test.py --flows promo
 python full_site_test.py --flows task
 python full_site_test.py --flows earn
+python full_site_test.py --flows subordinate
 
 # 完整執行
-python full_site_test.py --flows popup,header,banner,menu,safety,mine,account,record,promo,task,earn
+python full_site_test.py --flows popup,header,banner,menu,safety,mine,account,record,promo,task,earn,subordinate
 
 # 不帶 --flows 時預設執行全部 flow
 python full_site_test.py
@@ -233,6 +243,7 @@ python -m probe.dom_probe --banner-watch 45 --popup-queue
 python -m probe.deep_probe
 python -m probe.deep_probe --only account,record
 python -m probe.deep_probe --only teamclub
+python -m probe.deep_probe --only subordinate
 ```
 
 ---
@@ -258,6 +269,50 @@ python -m probe.deep_probe --only teamclub
 
 Terminal 會即時列出每個 Case 與最後的 Summary，
 exit code：全部通過為 `0`，有 FAIL 為 `1`。
+
+### Output Retention（產物清理）
+
+`output/` 會隨每次執行累積，可用 `tools/cleanup_output.py` 依保留規則清理。
+
+```bash
+# dry-run（預設）：只列出計畫，不刪除任何檔案
+python -m tools.cleanup_output
+
+# 確認無誤後才真的刪除
+python -m tools.cleanup_output --apply
+
+# 自訂保留數量
+python -m tools.cleanup_output --keep-results 30 --keep-snapshots 5
+```
+
+保留規則：
+
+| 產物 | 命名 | 保留 |
+|---|---|---|
+| result CSV / JSON | `result_<ts>.csv` / `.json` | 最近 **20** 次 execution |
+| FAIL 截圖 | `screenshots/FAIL_<caseid>_<HHMMSS>.png` | 與所屬 execution 連動（見下） |
+| DOM Snapshot | `probe/snapshot_<name>_<ts>.json` | 每個 `<name>` 最近 **3** 份 |
+| dom_probe | `probe/probe_<ts>.json` | 最近 **5** 份 |
+| deep_probe | `probe/deep_<ts>.json` | 最近 **5** 份 |
+
+截圖關聯方式：截圖檔名只有 `HHMMSS`、沒有日期，因此**不從檔名推測歸屬**，
+而是讀取每個 result JSON 的 `screenshot` 欄位取得確切路徑：
+
+- 被保留的 execution 引用 → KEEP
+- 只被將刪除的 execution 引用 → DELETE
+- 沒有任何 result 引用到 → **KEEP**（無法可靠關聯，寧可保留）
+
+因此不會出現「保留下來的 CSV/JSON 指向已被刪除的截圖」。
+
+安全守門：
+
+- 預設一定是 dry-run，**只有 `--apply` 才會刪除**
+- 只處理 `test/output/` 內符合上述命名規則的檔案
+- 不符合命名規則者一律標記 **UNKNOWN，永遠不刪**
+- 路徑 resolve 後必須仍位於 `test/output/` 之內；禁止 `..` 逃逸；禁止 symlink
+- dry-run 與 `--apply` 使用**完全相同的 selection logic**
+- 刪除前會列出：完整路徑 / 類型 / timestamp / size / 刪除原因
+- 單一刪除失敗不會中止其他項目，但 exit code 會反映失敗（有失敗回傳 `1`）
 
 ---
 
@@ -311,38 +366,44 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
 - `/task_center` 的 `Go` ×6 — React onClick 已被 minify 成 `h=>{d(h)}`，
   無法唯讀判斷導向何處；任務本身是「投注 1000」流水任務，
   依安全原則維持 L1，未點擊。
+- `/teamClub` Rules 分頁的 `Invite Now!` ×3 — onClick 同樣被 minify 成 `m=>{d(m)}`，
+  無法唯讀確認導向，維持 L1。
+- `/subordinateData` — 開啟日期選擇 modal 會把 `Join Time` 的排序指示
+  由 `ic_arrow_down_1` 重置為 `ic_up_and_down`。屬前端暫態（重新載入即回到預設排序），
+  非資料異常；`L-99` 會主動還原並驗證。
+- `/subordinateData` 的搜尋輸入框是 React 受控元件：一次送整串字只會留下 1 碼，
+  且 `element.clear()` 無效。已在 `wait_utils` 提供 `type_text()` / `clear_input()` 因應。
 
 ---
 
 ## 9. Regression Baseline
 
-最後一次完整 Regression（11 個 flow 全部執行）：
+最後一次完整 Regression（12 個 flow 全部執行）：
 
 **Headed**
 
 ```
-Total : 117
-PASS  : 86
+Total : 129
+PASS  : 98
 FAIL  : 2
 SKIP  : 29
-Time  : 314.18s
+Time  : 326.26s
 Result: FAIL
 ```
 
 **Headless**
 
 ```
-Total : 117
-PASS  : 86
+Total : 129
+PASS  : 98
 FAIL  : 2
 SKIP  : 29
-Time  : 259.20s
+Time  : 302.45s
 Result: FAIL
 ```
 
-兩者的 Case 集合與逐 Case 狀態完全一致。
-唯一差異是 `A-2` / `A-3` 的輸出順序：首頁 popup 是佇列式彈出，
-每次實際出現順序本來就會變動，兩次都是 PASS。
+兩者的 Case 集合與逐 Case 狀態完全一致（逐筆比對無差異）。
+首頁 popup 為佇列式彈出，`A-2` / `A-3` 的輸出順序每次可能不同，兩次都是 PASS。
 2 個 FAIL 皆為第 8 節記錄的網站顯示缺陷（`C-00`、`I-00`），非自動化程式問題。
 
 ---
@@ -363,3 +424,15 @@ Result: FAIL
 - DOM 探查放 `probe/`
 - Toast 只是輔助性的 Post-condition：`catch_toast()` 抓到就記錄，
   **抓不到不會造成 FAIL**
+
+
+# Phase	       核心重點	                                        簡單理解
+- Phase 1	建立自動化測試框架	                                 先把骨架做好
+- Phase 2	搬移既有 V6 測試	                                  把原本會測的功能模組化
+- Phase 3	掃描網站 DOM Probe	                                盤點網站還有哪些功能
+- Phase 4	首頁功能擴充完整化	                                 把首頁主要功能補齊
+- Phase 5	深入MINE	                                          開始深入個人中心
+- Phase 6	深入Account / Record / Promo / Task	                深入主要內頁功能
+- Phase 7	深入EARN / Team Club	                              繼續擴大全站覆蓋率
+- Phase 8 Subordinate Data                                    查詢功能 (建立「輸入、搜尋、篩選」能力。)
+- Phase 9 既有功能深度補強                                      主要鎖定 /record

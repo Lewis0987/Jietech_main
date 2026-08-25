@@ -221,6 +221,49 @@ def safe_input(driver, locator, text, timeout=DEFAULT_TIMEOUT, clear=True):
     return el
 
 
+def type_text(driver, locator, text, timeout=DEFAULT_TIMEOUT, delay=0.06):
+    """逐字輸入，適用 React 受控輸入框。
+
+    本站的輸入框是 React controlled component：
+    一次 send_keys 整串字會被 re-render 吃掉大部分字元
+    （實測送 10 碼只留下 1 碼），因此必須逐字輸入並留間隔。
+    回傳實際輸入後的 value。
+    """
+    el = wait_visible(driver, locator, timeout) if isinstance(locator, tuple) else locator
+    scroll_into_view(driver, el)
+    for ch in str(text):
+        el.send_keys(ch)
+        time.sleep(delay)
+    settle(0.4)
+    return el.get_attribute("value")
+
+
+def clear_input(driver, locator, timeout=DEFAULT_TIMEOUT):
+    """清空 React 受控輸入框。
+
+    element.clear() 對受控元件無效（值會被 React 立刻寫回），
+    改用 Ctrl+A + DELETE；仍清不掉時退回連續 BACKSPACE。
+    回傳清空後的 value。
+    """
+    from selenium.webdriver.common.keys import Keys
+    el = wait_visible(driver, locator, timeout) if isinstance(locator, tuple) else locator
+    scroll_into_view(driver, el)
+    try:
+        el.send_keys(Keys.CONTROL, "a")
+        el.send_keys(Keys.DELETE)
+        settle(0.4)
+    except Exception:
+        pass
+    value = el.get_attribute("value") or ""
+    if value:
+        for _ in range(min(len(value) + 5, 40)):
+            el.send_keys(Keys.BACKSPACE)
+            time.sleep(0.03)
+        settle(0.3)
+        value = el.get_attribute("value") or ""
+    return value
+
+
 def text_of(driver, locator, timeout=SHORT_TIMEOUT, default=""):
     try:
         return (wait_present(driver, locator, timeout).text or "").strip()
