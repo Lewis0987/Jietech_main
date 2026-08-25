@@ -58,7 +58,8 @@ D:\Jietech
     │   └─ subordinate_flow.py # [L] Subordinate Data 查詢
     │
     ├─ tools/                 # 測試產物維護
-    │   └─ cleanup_output.py  # Output Retention 清理（預設 dry-run）
+    │   ├─ cleanup_output.py  # Output Retention 清理（預設 dry-run）
+    │   └─ safety_audit.py    # 測試結果安全稽核（語意判斷，非關鍵字比對）
     │
     ├─ probe/                 # DOM 唯讀探查
     │   ├─ dom_probe.py       # 全站元素盤點 / Banner 輪播取樣 / Popup 佇列快照
@@ -93,7 +94,7 @@ D:\Jietech
 | **[E]** | `safety` | Deposit / Withdraw / First Deposit / LiveChat / 首充金額 / checkbox / Collect / SPIN / Submit / Redeem | 14 | **全部 L1，零點擊** |
 | **[F]** | `mine` | My info / Mission / Balance details / Live support / Gifts / Join our community / Download App / Refresh / Logout | 11 | Live support、Download App、Logout 為 L1 |
 | **[G]** | `account` | Avatar / Nickname / Gender（開關 modal）、Player ID / 邀請碼（唯讀）、綁定手機 / 登入密碼 / 綁定邀請碼（L1） | 10 | 測試前後比對全部欄位，確認資料未變 |
-| **[H]** | `record` | Detail / Withdrawal 分頁、All / Income / Expense 篩選 | 7 | 純查詢，測試後恢復初始狀態 |
+| **[H]** | `record` | Detail Record Tab / **Withdrawal Record Tab**、All / Income / Expense 篩選、欄位標題驗證、Empty state、查詢控制項覆蓋盤點 | 8 | 純查詢，測試後恢復初始狀態 |
 | **[I]** | `promo` | `/activity` 活動卡片盤點與逐一驗證 | 12 | Claim / Redeem / Submit / SPIN / Deposit 只驗證 |
 | **[J]** | `task` | Task Center：Claim all + 6 個 Go 的安全分類 | 9 | **全部 L1，零點擊** |
 | **[K]** | `earn` | Team Club：My Rewards / Invite Rewards / Rules 分頁、Club Stars Detail（`/subordinateData`）、說明 icon、Rebate 輪播、Invite your friends（`/share`） | 14 | Claim / Claim all / Invite Now! / Telegram / WhatsApp / Copy Link / Save Picture 全部 L1 |
@@ -150,6 +151,48 @@ L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
 
 `config.SAFE_LEVEL` 預設為 `1`；`config.assert_safe()` 會在正式環境
 （`INPV6`、`7IND`）強制拒絕提高等級。
+
+### ⚠ Withdrawal Record Tab ≠ Withdraw
+
+站上有兩個名稱相近但性質完全不同的東西，測試與稽核都必須分開看待：
+
+| 名稱 | 位置 | 性質 | 分級 |
+|---|---|---|---|
+| **Withdrawal Record Tab** | `/record` 的查詢頁籤 | 交易紀錄查詢，可逆導覽 | **L2**（Case `H-4`，會實際點擊） |
+| **Withdraw** | 大廳帳號區的按鈕 | 真正的提款入口，不可逆 | **L1**（Case `E-2`，零點擊） |
+
+Case 名稱、log 與稽核規則都已明確標示為 `Withdrawal Record Tab`，
+避免被誤判成提款操作。
+
+### Safety Audit
+
+`tools/safety_audit.py` 會讀取 result JSON，確認自動化沒有執行破壞性操作。
+
+```bash
+python -m tools.safety_audit            # 稽核最新一份 result JSON
+python -m tools.safety_audit --last 3   # 稽核最近 3 份
+python -m tools.safety_audit -v         # 另外列出所有 [SAFE-L1] case
+```
+
+**判斷方式不是單純 grep 關鍵字**，而是結合五項資訊：
+
+| 維度 | 用途 |
+|---|---|
+| Case ID | 對應到哪一個 case |
+| Flow | result JSON 的 `group`（A~L） |
+| URL | 由步驟推導該 case 當時所在頁面（同 flow 內沿用最後已知頁面） |
+| Action | 只檢查 `[action]` 步驟，不看 `[check]` / `[found]` |
+| 元素語意 | 區分 `Withdrawal Record Tab` 與 `Withdraw` 按鈕等 |
+
+另用詞界區分英文單字：`withdraw`（提款動作）與 `withdrawal`（提款紀錄）
+不會互相誤判。
+
+規則：
+
+- 標記 `[SAFE-L1]` 的 case **必須完全沒有點擊動作**，有的話一律視為違規
+- 含風險關鍵字但確認安全者，必須在 `SAFE_EXEMPTIONS` 明列
+  case / flow / 動作樣式 / 頁面 / 元素語意 / **理由**，不是無差別白名單
+- 有違規時 exit code 回傳 `1`
 
 ---
 
@@ -244,6 +287,13 @@ python -m probe.deep_probe
 python -m probe.deep_probe --only account,record
 python -m probe.deep_probe --only teamclub
 python -m probe.deep_probe --only subordinate
+```
+
+安全稽核與產物清理：
+
+```bash
+python -m tools.safety_audit            # 稽核最新一次測試結果
+python -m tools.cleanup_output          # 產物清理 dry-run（預設不刪除）
 ```
 
 ---
@@ -373,6 +423,14 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
   非資料異常；`L-99` 會主動還原並驗證。
 - `/subordinateData` 的搜尋輸入框是 React 受控元件：一次送整串字只會留下 1 碼，
   且 `element.clear()` 無效。已在 `wait_utils` 提供 `type_text()` / `clear_input()` 因應。
+  **其他頁面的 input 一律共用這兩個 helper，不要各 flow 自己重寫輸入邏輯。**
+- `/record` **目前沒有** 搜尋 input、日期選擇、排序、分頁控制項
+  （Detail 與 Withdrawal Record 兩個分頁、捲動到底皆已確認）。
+  因此不建立對應 Case；`H-6` 會持續盤點這些控制項數量，
+  一旦網站新增即可從 `H-6` 的輸出發現並補測。
+- `/record` 分頁的 active 標記是內部的 `img[alt='active']`，不是 class token。
+  Phase 6~8 使用 class 判斷時 `active` 一直讀不到（顯示 `tab=None`），
+  Phase 9 已修正，`H-4` / `H-5` 現在能真正驗證 active 分頁。
 
 ---
 
@@ -383,22 +441,22 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
 **Headed**
 
 ```
-Total : 129
-PASS  : 98
+Total : 130
+PASS  : 99
 FAIL  : 2
 SKIP  : 29
-Time  : 326.26s
+Time  : 312.05s
 Result: FAIL
 ```
 
 **Headless**
 
 ```
-Total : 129
-PASS  : 98
+Total : 130
+PASS  : 99
 FAIL  : 2
 SKIP  : 29
-Time  : 302.45s
+Time  : 308.29s
 Result: FAIL
 ```
 
@@ -435,4 +493,5 @@ Result: FAIL
 - Phase 6	深入Account / Record / Promo / Task	                深入主要內頁功能
 - Phase 7	深入EARN / Team Club	                              繼續擴大全站覆蓋率
 - Phase 8 Subordinate Data                                    查詢功能 (建立「輸入、搜尋、篩選」能力。)
-- Phase 9 既有功能深度補強                                      主要鎖定 /record
+- Phase 9 既有功能深度補強                                     主要鎖定 /record
+- Phase 10 Search Input                                       Result → Empty → Clear → Recovery 的完整 E2E

@@ -42,8 +42,10 @@ function pick(name) {
 const out = {tabs: {}, filters: {}};
 arguments[0].forEach(n => {
   const e = pick(n);
+  // Phase 9-A 實測：active 分頁的標記是內部的 img[alt='active']，
+  // 不是 class token（舊版用 class 判斷從未成立，active 一直是 None）。
   out.tabs[n] = e ? {cls: t(e.className),
-                     active: t(e.className).split(/\s+/).includes('active')} : null;
+                     active: !!e.querySelector("img[alt='active']")} : null;
 });
 arguments[1].forEach(n => {
   const e = pick(n);
@@ -53,6 +55,23 @@ arguments[1].forEach(n => {
 });
 out.rows = document.querySelectorAll("img[alt='ic_coin']").length;
 out.empty = /It is empty here/i.test(document.body.innerText);
+out.no_result_img = !!document.querySelector("img[alt='img_no_results']");
+// 各分頁的欄位標題（Detail 與 Withdrawal Record 欄位不同）
+const bodyText = document.body.innerText || '';
+out.columns = ['Type', 'Change', 'Balance', 'Time & Order Number', 'Request Amount', 'State']
+  .filter(c => bodyText.indexOf(c) >= 0);
+// /record 目前沒有 input / date / sort / pagination，一併記錄以便未來變更時發現
+out.controls = {
+  inputs: document.querySelectorAll('input').length,
+  buttons: document.querySelectorAll('button').length,
+  selects: document.querySelectorAll('select').length,
+  date_like: document.querySelectorAll("img[alt*='arrow_down'],img[alt*='calendar']").length,
+  sort_like: document.querySelectorAll("img[alt*='up_and_down']").length,
+  pager_like: [...document.querySelectorAll('div,span')].filter(e => {
+      const x = t(e.innerText);
+      return /^(Next|Prev|Previous|Load more|More)$/i.test(x);
+    }).length
+};
 out.body = t(document.body.innerText).slice(0, 160);
 return out;
 """
@@ -178,7 +197,7 @@ def run(ctx):
             c.note("內容摘要：%s" % after.get("body", "")[:110])
 
     # ============================================================== H-4 Withdrawal 分頁
-    with ctx.case("H-4", "分頁 Withdrawal") as c:
+    with ctx.case("H-4", "分頁 Withdrawal Record Tab（交易紀錄查詢，非提款功能）") as c:
         if not _goto_record(ctx):
             c.skip("無法進入 /record")
         before = _state(driver)
@@ -192,24 +211,30 @@ def run(ctx):
         W.note_toast(driver, c)
 
         after = _state(driver)
-        tab_ok = (_active_tab(after) == "Withdrawal")
-        layout_changed = (after.get("body") != before.get("body")
-                          or after.get("filters") != before.get("filters"))
-        if not tab_ok and not layout_changed:
-            raise AssertionError("點擊 Withdrawal 後 active 與版面都沒有變化")
-        if tab_ok:
-            c.check("active 分頁已切換為 Withdrawal")
+        if _active_tab(after) != "Withdrawal":
+            raise AssertionError("點擊後 active 分頁是 %s（預期 Withdrawal）"
+                                 % _active_tab(after))
+        c.check("active 分頁已切換為 Withdrawal Record Tab（img[alt='active'] 標記）")
+
+        cols = after.get("columns") or []
+        c.check("此分頁欄位標題：%s" % cols)
+        if not any(x in cols for x in ("Time & Order Number", "Request Amount", "State")):
+            raise AssertionError("Withdrawal Record Tab 沒有預期的欄位標題：%s" % cols)
+        if (after.get("filters") or {}).get("All"):
+            c.note("此分頁仍有 All/Income/Expense 篩選列")
         else:
-            c.check("版面已改變（篩選列消失 / 欄位不同）")
+            c.check("此分頁沒有 All/Income/Expense 篩選列（版面與 Detail 不同）")
 
         if after.get("empty"):
-            c.check("Withdrawal 為 Empty state — 測試帳號無提款紀錄，正常")
+            c.check("查詢結果為 Empty state（It is empty here.，img_no_results=%s）"
+                    "— 測試帳號無提款紀錄，屬正常" % after.get("no_result_img"))
         else:
-            c.check("Withdrawal 有 %s 筆資料" % after.get("rows"))
+            c.check("Withdrawal Record Tab 有 %s 筆資料" % after.get("rows"))
+        c.note("此為交易紀錄查詢頁籤（L2 可逆），與 Safety Flow E-2 的提款入口無關")
         c.note("內容摘要：%s" % after.get("body", "")[:110])
 
     # ============================================================== H-5 Detail 分頁
-    with ctx.case("H-5", "分頁 Detail（切回）") as c:
+    with ctx.case("H-5", "分頁 Detail Record Tab（切回）") as c:
         if not _goto_record(ctx):
             c.skip("無法進入 /record")
         before = _state(driver)
@@ -222,10 +247,45 @@ def run(ctx):
         W.settle(1.5)
 
         after = _state(driver)
+        if _active_tab(after) != "Detail":
+            raise AssertionError("切回後 active 分頁是 %s（預期 Detail）"
+                                 % _active_tab(after))
+        c.check("active 分頁已切回 Detail Record Tab")
         if not (after.get("filters") or {}).get("All"):
             raise AssertionError("切回 Detail 後找不到 All/Income/Expense 篩選列")
-        c.check("已切回 Detail，篩選列重新出現")
+        c.check("篩選列重新出現")
+        cols = after.get("columns") or []
+        c.check("此分頁欄位標題：%s" % cols)
+        if not any(x in cols for x in ("Type", "Change", "Balance")):
+            raise AssertionError("Detail Record Tab 沒有預期的欄位標題：%s" % cols)
         c.check("目前狀態：%s" % _describe(after))
+
+    # ============================================================== H-6
+    with ctx.case("H-6", "查詢控制項覆蓋盤點（date / search / sort / pagination）") as c:
+        if not _goto_record(ctx):
+            c.skip("無法進入 /record")
+        st = _state(driver)
+        ctrl = st.get("controls") or {}
+        c.found("目前 /record 的控制項統計：%s" % ctrl)
+
+        missing = []
+        if not ctrl.get("inputs"):
+            missing.append("搜尋 input")
+        if not ctrl.get("date_like"):
+            missing.append("日期選擇")
+        if not ctrl.get("sort_like"):
+            missing.append("排序")
+        if not ctrl.get("pager_like"):
+            missing.append("分頁 / Load more")
+
+        for m in missing:
+            c.check("[Not Applicable] 此頁目前沒有%s控制項，因此不建立對應 Case" % m)
+        if not missing:
+            c.note("偵測到新的查詢控制項，需要補測試：%s" % ctrl)
+        c.check("已涵蓋的查詢控制項：Detail / Withdrawal Record 分頁 + "
+                "All / Income / Expense 篩選")
+        c.note("本 case 用來偵測網站日後新增查詢控制項；"
+               "若 inputs / date / sort / pagination 由 0 變為非 0 即需補測")
 
     # ============================================================== H-99
     with ctx.case("H-99", "恢復初始狀態驗證") as c:
@@ -251,7 +311,13 @@ def run(ctx):
             raise AssertionError("列表狀態未恢復：rows %s->%s empty %s->%s"
                                  % (initial.get("rows"), final.get("rows"),
                                     initial.get("empty"), final.get("empty")))
-        c.check("已恢復初始查詢狀態")
+        if _active_tab(final) != _active_tab(initial):
+            raise AssertionError("分頁未恢復：%s -> %s"
+                                 % (_active_tab(initial), _active_tab(final)))
+        if final.get("columns") != initial.get("columns"):
+            raise AssertionError("欄位標題未恢復：%s -> %s"
+                                 % (initial.get("columns"), final.get("columns")))
+        c.check("分頁 / 篩選 / 欄位 / 列表狀態皆已恢復初始")
 
         ctx.go_home()
         c.check("已回到大廳：%s" % driver.current_url)
