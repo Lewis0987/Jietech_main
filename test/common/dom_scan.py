@@ -172,8 +172,14 @@ INTERACTIVE_JS = r"""
 const trunc = (s, n) => (s || '').toString().replace(/\s+/g, ' ').trim().slice(0, n);
 
 function reactClick(el) {
-  for (const k in el) {
-    if (k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$')) {
+  // 用 Object.keys（只看 own property）而不是 for...in：
+  // for...in 會走遍 DOM 元素的整條原型鏈（數百個屬性），
+  // 在元素多的頁面（例如 /teamClub）會讓 renderer 卡住數十秒而逾時。
+  const keys = Object.keys(el);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (k.charCodeAt(0) === 95 &&
+        (k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$'))) {
       const p = el[k];
       if (p && (typeof p.onClick === 'function' || typeof p.onPointerDown === 'function')) return true;
     }
@@ -201,12 +207,19 @@ function pathOf(el) {
 }
 
 const out = [];
-document.querySelectorAll('body *').forEach(el => {
+const all = document.querySelectorAll('body *');
+const LIMIT = 6000;
+for (let idx = 0; idx < all.length && idx < LIMIT; idx++) {
+  const el = all[idx];
   const tag = el.tagName.toLowerCase();
-  if (tag === 'script' || tag === 'style' || tag === 'svg' || tag === 'path') return;
+  if (tag === 'script' || tag === 'style' || tag === 'svg' || tag === 'path') continue;
+
+  // 先用便宜的尺寸判斷過濾掉不可見元素，再去算 computed style
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) continue;
+  if (r.width > 1200 && r.height > 600) continue;   // 整頁遮罩之類的容器略過
 
   const cs = getComputedStyle(el);
-  const r = el.getBoundingClientRect();
   const semantic = ['button', 'a', 'input', 'select', 'textarea'].includes(tag);
   const role = el.getAttribute('role') || '';
   const tabindex = el.getAttribute('tabindex');
@@ -214,9 +227,7 @@ document.querySelectorAll('body *').forEach(el => {
   const inlineClick = !!el.getAttribute('onclick');
   const rClick = reactClick(el);
 
-  if (!(semantic || role || tabindex !== null || pointer || inlineClick || rClick)) return;
-  if (r.width <= 0 || r.height <= 0) return;
-  if (r.width > 1200 && r.height > 600) return;   // 整頁遮罩之類的容器略過
+  if (!(semantic || role || tabindex !== null || pointer || inlineClick || rClick)) continue;
 
   // 父層已被判定可互動且文字相同 -> 只留最內層，避免整串巢狀重複。
   // 但父層若本身高度為 0（版面塌陷），子層才是使用者真正看得到的部分，不可略過。
@@ -224,7 +235,7 @@ document.querySelectorAll('body *').forEach(el => {
   if (parent && !semantic) {
     const pr = parent.getBoundingClientRect();
     if (pr.height > 0 && getComputedStyle(parent).cursor === 'pointer'
-        && trunc(parent.innerText, 40) === trunc(el.innerText, 40)) return;
+        && trunc(parent.innerText, 40) === trunc(el.innerText, 40)) continue;
   }
 
   // 被其他元素完全遮住 -> 使用者實際點不到，標記出來
@@ -260,12 +271,13 @@ document.querySelectorAll('body *').forEach(el => {
     path: pathOf(el),
     children: el.children.length
   });
-});
+}
 
 out.sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
 return {url: location.href, title: document.title,
         viewport: [window.innerWidth, window.innerHeight],
-        count: out.length, items: out.slice(0, 120)};
+        scanned: Math.min(all.length, LIMIT), total_nodes: all.length,
+        count: out.length, items: out.slice(0, 160)};
 """
 
 

@@ -33,6 +33,7 @@ from common import wait_utils as W               # noqa: E402
 
 MINE_ICON = W.css("img[alt='ic_user']")
 PROMO_ICON = W.css("img[alt='ic_activity']")
+EARN_ICON = W.css("img[alt='ic_earn_money']")
 HOME_ICON = W.css("img[alt='ic_home']")
 
 
@@ -73,6 +74,13 @@ def goto_activity(drv, home_url):
     return drv.current_url
 
 
+def goto_teamclub(drv, home_url):
+    """大廳 -> TabBar EARN（/teamClub）。"""
+    _goto_hall(drv, home_url)
+    _click(drv, EARN_ICON)
+    return drv.current_url
+
+
 def goto_task_center(drv, home_url):
     """大廳 -> MINE -> Mission（/task_center）。"""
     _goto_hall(drv, home_url)
@@ -86,6 +94,7 @@ TARGETS = [
     ("record", goto_record),
     ("activity", goto_activity),
     ("task_center", goto_task_center),
+    ("teamclub", goto_teamclub),
 ]
 
 

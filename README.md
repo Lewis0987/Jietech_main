@@ -7,7 +7,7 @@
 
 目前架構已實作並實測的能力：
 
-- 全站主要功能測試（首頁 Popup / Header / Banner / 導覽選單 / 個人中心 / 帳號 / 帳變明細 / 活動 / 任務中心）
+- 全站主要功能測試（首頁 Popup / Header / Banner / 導覽選單 / 個人中心 / 帳號 / 帳變明細 / 活動 / 任務中心 / 團隊俱樂部）
 - Flow 模組化，可單獨執行或一次執行全部
 - 每個功能一個獨立 Case，做到 Found → Action → Post-condition → Recovery
 - Headed / Headless 兩種模式，逐 Case 結果一致
@@ -53,11 +53,12 @@ D:\Jietech
     │   ├─ account_flow.py    # [G] Account 個人資料
     │   ├─ record_flow.py     # [H] Balance details 查詢 / 篩選
     │   ├─ promo_flow.py      # [I] PROMO 活動頁
-    │   └─ task_flow.py       # [J] Task Center 安全分類
+    │   ├─ task_flow.py       # [J] Task Center 安全分類
+    │   └─ earn_flow.py       # [K] EARN / Team Club
     │
     ├─ probe/                 # DOM 唯讀探查
     │   ├─ dom_probe.py       # 全站元素盤點 / Banner 輪播取樣 / Popup 佇列快照
-    │   └─ deep_probe.py      # /account /record /activity /task_center 可互動元素深度探查
+    │   └─ deep_probe.py      # /account /record /activity /task_center /teamClub 可互動元素深度探查
     │
     └─ output/                # 測試產物（已加入 .gitignore）
         ├─ result_<ts>.csv
@@ -89,6 +90,7 @@ D:\Jietech
 | **[H]** | `record` | Detail / Withdrawal 分頁、All / Income / Expense 篩選 | 7 | 純查詢，測試後恢復初始狀態 |
 | **[I]** | `promo` | `/activity` 活動卡片盤點與逐一驗證 | 12 | Claim / Redeem / Submit / SPIN / Deposit 只驗證 |
 | **[J]** | `task` | Task Center：Claim all + 6 個 Go 的安全分類 | 9 | **全部 L1，零點擊** |
+| **[K]** | `earn` | Team Club：My Rewards / Invite Rewards / Rules 分頁、Club Stars Detail（`/subordinateData`）、說明 icon、Rebate 輪播、Invite your friends（`/share`） | 14 | Claim / Claim all / Invite Now! / Telegram / WhatsApp / Copy Link / Save Picture 全部 L1 |
 
 ---
 
@@ -117,6 +119,9 @@ D:\Jietech
 - Bind invitation code
 - My invitation code 的複製
 - Live support（開啟客服視窗需跨網域操作 iframe，無法可靠復原）
+- Team Club 的 Claim（實測 `disabled=true`，仍不點擊）
+- Team Club 的 Invite Now!（導向未經探查確認，依原則維持 L1）
+- `/share` 的 Copy Link（會修改剪貼簿）與 Save Picture（會產生下載檔）
 - Telegram / WhatsApp 等外部連結
 
 L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
@@ -131,6 +136,7 @@ L1 的 Case 會在步驟中標記 `[SAFE-L1]`。
 - 遊戲分類切換
 - Search 開啟 / 關閉
 - Modal 開啟 / 關閉（Avatar / Nickname / Gender / Gifts）
+- Team Club 分頁切換與 Rebate 輪播（左右各一次後還原）
 - Popup 關閉
 
 `config.SAFE_LEVEL` 預設為 `1`；`config.assert_safe()` 會在正式環境
@@ -195,9 +201,10 @@ python full_site_test.py --flows account
 python full_site_test.py --flows record
 python full_site_test.py --flows promo
 python full_site_test.py --flows task
+python full_site_test.py --flows earn
 
 # 完整執行
-python full_site_test.py --flows popup,header,banner,menu,safety,mine,account,record,promo,task
+python full_site_test.py --flows popup,header,banner,menu,safety,mine,account,record,promo,task,earn
 
 # 不帶 --flows 時預設執行全部 flow
 python full_site_test.py
@@ -225,6 +232,7 @@ python -m probe.dom_probe --routes
 python -m probe.dom_probe --banner-watch 45 --popup-queue
 python -m probe.deep_probe
 python -m probe.deep_probe --only account,record
+python -m probe.deep_probe --only teamclub
 ```
 
 ---
@@ -261,7 +269,7 @@ exit code：全部通過為 `0`，有 FAIL 為 `1`。
 
 - Banner DOM 存在，`data-swiper-slide-index` 共 10 格
 - 圖片已載入完成（`complete=true`，naturalSize 1080×402）
-- 但 rendered height 為 0（輪播容器僅 21px，含圖 slide 的圖片高度 = 0px）
+- 但 rendered height 為 0（輪播容器 21px、wrapper 21px，含圖 slide 的圖片高度 = 0px）
 - 螢幕截圖確認：使用者畫面上完全沒有 Banner 區塊
 - Headed 與 Headless 結果相同
 
@@ -308,31 +316,33 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
 
 ## 9. Regression Baseline
 
-最後一次完整 Regression（10 個 flow 全部執行）：
+最後一次完整 Regression（11 個 flow 全部執行）：
 
 **Headed**
 
 ```
-Total : 103
-PASS  : 72
+Total : 117
+PASS  : 86
 FAIL  : 2
 SKIP  : 29
-Time  : 218.57s
+Time  : 314.18s
 Result: FAIL
 ```
 
 **Headless**
 
 ```
-Total : 103
-PASS  : 72
+Total : 117
+PASS  : 86
 FAIL  : 2
 SKIP  : 29
-Time  : 211.14s
+Time  : 259.20s
 Result: FAIL
 ```
 
-兩者逐 Case 結果完全一致。
+兩者的 Case 集合與逐 Case 狀態完全一致。
+唯一差異是 `A-2` / `A-3` 的輸出順序：首頁 popup 是佇列式彈出，
+每次實際出現順序本來就會變動，兩次都是 PASS。
 2 個 FAIL 皆為第 8 節記錄的網站顯示缺陷（`C-00`、`I-00`），非自動化程式問題。
 
 ---
