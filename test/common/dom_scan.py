@@ -160,6 +160,125 @@ return out;
 """
 
 
+# ------------------------------------------------------------------ 可互動元素
+# 本站是 React SPA，大量功能是 div + onClick，光統計 button/input/a 會嚴重低估。
+# 這段用多重訊號判斷「使用者實際可以點的東西」：
+#   1. 語意標籤（button / a / input / select）
+#   2. role / tabindex
+#   3. computed cursor: pointer
+#   4. inline onclick
+#   5. React fiber 上掛著 onClick handler（__reactProps$ / __reactEventHandlers$）
+INTERACTIVE_JS = r"""
+const trunc = (s, n) => (s || '').toString().replace(/\s+/g, ' ').trim().slice(0, n);
+
+function reactClick(el) {
+  for (const k in el) {
+    if (k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$')) {
+      const p = el[k];
+      if (p && (typeof p.onClick === 'function' || typeof p.onPointerDown === 'function')) return true;
+    }
+  }
+  return false;
+}
+
+function dataAttrs(el) {
+  const out = {};
+  for (const a of el.attributes) {
+    if (a.name.startsWith('data-')) out[a.name] = trunc(a.value, 60);
+  }
+  return out;
+}
+
+function pathOf(el) {
+  const parts = [];
+  let n = el;
+  for (let i = 0; i < 4 && n && n.tagName; i++) {
+    const c = (n.className || '').toString().split(/\s+/).filter(Boolean)[0] || '';
+    parts.unshift(n.tagName.toLowerCase() + (c ? '.' + c : ''));
+    n = n.parentElement;
+  }
+  return parts.join(' > ');
+}
+
+const out = [];
+document.querySelectorAll('body *').forEach(el => {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'script' || tag === 'style' || tag === 'svg' || tag === 'path') return;
+
+  const cs = getComputedStyle(el);
+  const r = el.getBoundingClientRect();
+  const semantic = ['button', 'a', 'input', 'select', 'textarea'].includes(tag);
+  const role = el.getAttribute('role') || '';
+  const tabindex = el.getAttribute('tabindex');
+  const pointer = cs.cursor === 'pointer';
+  const inlineClick = !!el.getAttribute('onclick');
+  const rClick = reactClick(el);
+
+  if (!(semantic || role || tabindex !== null || pointer || inlineClick || rClick)) return;
+  if (r.width <= 0 || r.height <= 0) return;
+  if (r.width > 1200 && r.height > 600) return;   // 整頁遮罩之類的容器略過
+
+  // 父層已被判定可互動且文字相同 -> 只留最內層，避免整串巢狀重複。
+  // 但父層若本身高度為 0（版面塌陷），子層才是使用者真正看得到的部分，不可略過。
+  const parent = el.parentElement;
+  if (parent && !semantic) {
+    const pr = parent.getBoundingClientRect();
+    if (pr.height > 0 && getComputedStyle(parent).cursor === 'pointer'
+        && trunc(parent.innerText, 40) === trunc(el.innerText, 40)) return;
+  }
+
+  // 被其他元素完全遮住 -> 使用者實際點不到，標記出來
+  let obscured = null;
+  try {
+    const top = document.elementFromPoint(
+      Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2));
+    obscured = !(top === el || el.contains(top) || (top && top.contains(el)));
+  } catch (e) {}
+
+  const img = el.querySelector('img');
+  out.push({
+    tag: tag,
+    text: trunc(el.innerText || el.value || '', 50),
+    cls: trunc(el.className, 110),
+    id: el.id || '',
+    role: role,
+    tabindex: tabindex,
+    cursor: cs.cursor,
+    inline_onclick: inlineClick,
+    react_onclick: rClick,
+    semantic: semantic,
+    disabled: !!el.disabled,
+    type: el.getAttribute('type') || '',
+    placeholder: el.getAttribute('placeholder') || '',
+    img_alt: img ? (img.alt || '') : '',
+    imgs: [...el.querySelectorAll('img')].map(i => i.alt || '').filter(Boolean).slice(0, 6),
+    data: dataAttrs(el),
+    rect: {x: Math.round(r.x), y: Math.round(r.y),
+           w: Math.round(r.width), h: Math.round(r.height)},
+    displayed: cs.visibility !== 'hidden' && cs.display !== 'none',
+    obscured: obscured,
+    path: pathOf(el),
+    children: el.children.length
+  });
+});
+
+out.sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
+return {url: location.href, title: document.title,
+        viewport: [window.innerWidth, window.innerHeight],
+        count: out.length, items: out.slice(0, 120)};
+"""
+
+
+def scan_interactive(driver, label, settle=1.0):
+    """回傳頁面上所有「使用者實際可點」的元素（唯讀）。"""
+    if settle:
+        time.sleep(settle)
+    data = driver.execute_script(INTERACTIVE_JS)
+    data["label"] = label
+    data["scanned_at"] = datetime.now().isoformat(timespec="seconds")
+    return data
+
+
 def scan(driver, label, settle=1.2):
     """對目前頁面做一次唯讀掃描。"""
     if settle:

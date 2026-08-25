@@ -38,7 +38,8 @@ FLOWS_DIR = os.path.join(BASE_DIR, "flows")
 
 # 預設執行順序（未列出的 flow 依字母序排在後面）。
 # popup 必須最先跑：popup 只在頁面剛載入時出現，被其他 flow 關掉就測不到了。
-FLOW_ORDER = ["popup", "header", "banner", "menu", "safety", "mine"]
+FLOW_ORDER = ["popup", "header", "banner", "menu", "safety",
+              "mine", "account", "record", "promo", "task"]
 
 
 # ====================================================================== Ctx
