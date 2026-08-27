@@ -603,6 +603,9 @@ Downloads 殘留: 0
 >   Lock Screen 無人操作執行皆已實測通過
 > - **Automatic Schedule Currently Disabled** —— 因目前沒有每日自動 Regression 的
 >   實際需求，正式 Task 已**停用（Disable，未刪除）**，需要時可直接重新 Enable
+> - **Manual GitHub Actions Regression Validated** —— GitHub Actions 上的
+>   `workflow_dispatch` 手動 Regression 已實測通過（見本節最後）。
+>   **GitHub Actions 目前同樣沒有 schedule**，只有手動觸發
 >
 > Sleep / Modern Standby 喚醒執行與長期 Scheduled Stability 觀察
 > 因目前無實際需求而**暫緩（Deferred）**，非技術失敗。
@@ -783,6 +786,102 @@ Error Type / Error Message / Elapsed / **Screenshot 路徑** / result JSON 與 C
 已驗證的是「Task Scheduler 能在無人操作、螢幕鎖定下完整跑完一輪」，
 而非「連續多日自動執行的穩定性」。
 
+### GitHub Actions CI Regression
+
+> **Manual GitHub Actions Regression = Validated**
+>
+> 這是**手動觸發（`workflow_dispatch`）**的 CI Regression。
+> **目前沒有 `schedule` / cron，沒有 `push` trigger，也沒有 `pull_request` trigger** ——
+> 不是 Scheduled CI，不會自動執行，只有人到 GitHub 頁面按下 Run workflow 才會跑。
+>
+> 這個 workflow **只做 Regression 驗證** —— 不做 build、不做 package／包版、
+> 不做任何 deployment，也不產生任何發佈物。
+
+| 項目 | 值 |
+|---|---|
+| Workflow | `.github/workflows/regression.yml` |
+| Trigger | **`workflow_dispatch`（Manual）** |
+| Runner | `windows-latest`（GitHub-hosted） |
+| Mode | headless |
+| 執行入口 | `python -m tools.scheduled_regression` |
+
+與 Windows Task Scheduler、人工執行**共用同一個 Automation Runner**，
+沒有第二套 CI Runner，也沒有第二套 Safety Audit。
+
+#### 觸發方式
+
+```
+GitHub → Actions → Jietech Regression → Run workflow
+  Branch : develop
+  flows  : 留空 = 12 個 flow 全跑
+```
+
+#### GitHub Actions 實測環境
+
+以下為 Run #1 的**實際輸出**，非設定值：
+
+| 項目 | 實測值 |
+|---|---|
+| Python | **3.14.7** |
+| selenium | 4.41.0 |
+| colorama | 0.4.6 |
+| Chrome | **151.0.7922.170**（`C:\Program Files\Google\Chrome\Application\chrome.exe`） |
+| home | `C:\Users\runneradmin` |
+| DOWNLOAD_PATH | `C:\Users\runneradmin\Downloads` |
+| BASE_DIR | `D:\a\Jietech_main\Jietech_main\test` |
+| TARGET | IN/INV6 |
+| SAFE_LEVEL | 1 |
+| IS_PRODUCTION | False |
+
+**Selenium Manager / ChromeDriver 在 GitHub-hosted runner 成功完成 WebDriver 啟動與完整 135 cases Regression。**
+ChromeDriver 版本 **`151.0.7922.138`** —— **此值由 Artifact 的 `result_*.json`
+（`meta.driver`）實際讀回**，是 Selenium 執行期從 driver 取得的 capabilities。
+**不是 GitHub Actions log 的內容，也不是推測值** —— Actions log 本身並未列出 ChromeDriver 版本。
+
+**Chrome / ChromeDriver 不進版控** —— driver 由 Selenium Manager 於執行時取得。
+
+#### CI Run 紀錄
+
+| # | Run | 觸發 | 時間 (UTC) | Raw | New Fail | Recovered | Missing | Safety | 殘留 | Final | Exit | 耗時 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | [#1](https://github.com/Lewis0987/Jietech_main/actions/runs/33036985666) | workflow_dispatch | 08/27 03:38 | 135/104/2/29 | 0 | 0 | 0 | PASS | 0 | **PASS** | **0** | 6m28s |
+
+- Branch / SHA：`develop` / `3c46421`
+- Regression 本體耗時：**352.89s**（12 flow / 135 cases）
+- Known Fail：**`C-00` / `I-00`** —— 分類為 `EXPECTED FAIL`，符合 Baseline，不計入新 Regression
+- Baseline 比對：`EXPECTED PASS 104` / `EXPECTED FAIL 2` / `EXPECTED SKIP 29`
+- Safety Audit：**PASS**（violations 0、語意豁免 1）
+- **Download E2E：PASS**，Download 殘留 **0**
+- Baseline **未被修改、未自動更新**
+
+`full_site_test.py` 本身的 exit code 為 `1`（因 raw FAIL=2），
+但 Automation 層比對 Baseline 後判定 exit `0` ——
+**GitHub Job 的成敗取決於 `scheduled_regression.py` 的 exit code，不是 raw FAIL 數量。**
+
+#### Artifact
+
+| 項目 | 值 |
+|---|---|
+| 名稱 | `jietech-regression-<run_number>`（Run #1 = `jietech-regression-1`） |
+| 條件 | **`if: always()`** —— Regression FAIL / Safety FAIL / Runner FAIL 時同樣上傳 |
+| Retention | **14 天** |
+| Run #1 實際 | 26 files / 1,126,080 bytes |
+
+Run #1 內容（已逐檔唯讀核對）：
+
+| 分類 | 數量 | 內容 |
+|---|---|---|
+| `automation/` | 2 | `automation_<ts>.json` + `.csv` |
+| `result_*.json` | 1 | 135 筆逐 Case 原始結果 |
+| `result_*.csv` | 1 | 同上 CSV |
+| `screenshots/` | 2 | `FAIL_C-00_*.png`、`FAIL_I-00_*.png` |
+| `probe/` | 20 | 唯讀 DOM snapshot |
+
+**截圖只有 2 張，正好對應 C-00 / I-00** —— 這本身就是「沒有其他 Case 失敗」的旁證。
+
+Artifact 內**不含**帳號、密碼、token、cookie、Authorization、電話或 email。
+（`Login password` 是頁面標籤，該測試帳號的實際狀態為 `No set`。）
+
 ---
 
 ## 11. Regression Baseline
@@ -849,3 +948,4 @@ Result: FAIL
 - Phase 11 自動化測試穩定性 / Flaky Test 驗證                   重複、穩定測試
 - Phase 12 CI / 排程式自動 Regression                          自動排程Regression
 - Phase 13 正式排程上線與無人值守驗證 --暫停開發                 每日排程summary --暫停開發
+- Phase 14 GitHub Actions CI Regression                       GitHub Actions 手動 CI Regression

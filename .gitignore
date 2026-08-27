@@ -1,0 +1,9 @@
+# 本機虛擬環境
+venv/
+.venv/
+
+# WebDriver 由 Selenium Manager 於執行時取得，不進版控
+chromedriver.exe
+
+# Download E2E 產物，避免日後人工搬入 repo 後誤 commit
+*.apk
