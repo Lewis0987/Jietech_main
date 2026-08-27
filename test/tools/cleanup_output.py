@@ -52,6 +52,8 @@ KEEP_RESULTS = 20        # 最近 N 次 execution 的 result CSV / JSON
 KEEP_SNAPSHOTS = 3       # 每個 snapshot name 保留最近 N 份
 KEEP_PROBES = 5          # probe_<ts>.json
 KEEP_DEEPS = 5           # deep_<ts>.json
+# 自動 Regression 的 Summary 與 log：保留較久，且「有新 Regression 的那幾份」永遠保留
+KEEP_AUTOMATION = 30
 
 # ---------------------------------------------------------------- 命名規則
 TS = r"(\d{8}_\d{6})"
@@ -61,6 +63,8 @@ RE_PROBE = re.compile(r"^probe_%s\.json$" % TS)
 RE_DEEP = re.compile(r"^deep_%s\.json$" % TS)
 RE_SHOT = re.compile(r"^FAIL_.+_\d{6}\.png$")
 RE_STABILITY = re.compile(r"^stability_%s\.(csv|json)$" % TS)
+RE_AUTOMATION = re.compile(r"^automation_%s\.(csv|json)$" % TS)
+RE_AUTO_LOG = re.compile(r"^scheduled_%s\.log$" % TS)
 
 # 已知但不屬於測試產物、也不該刪的檔案
 PROTECTED_NAMES = {".gitignore"}
@@ -155,6 +159,18 @@ def _classify(root, path):
             return "result", m.group(1), m.group(2)
         return None, None, None
 
+    if rel_dir == "automation":
+        m = RE_AUTOMATION.match(name)
+        if m:
+            return "automation", m.group(1), None
+        return None, None, None
+
+    if rel_dir == "automation/logs":
+        m = RE_AUTO_LOG.match(name)
+        if m:
+            return "automation_log", m.group(1), None
+        return None, None, None
+
     if rel_dir == "stability":
         # Stability 證據一律保留，不設刪除規則
         if RE_STABILITY.match(name):
@@ -204,7 +220,8 @@ def build_plan(root, keep_results=KEEP_RESULTS, keep_snapshots=KEEP_SNAPSHOTS,
                keep_probes=KEEP_PROBES, keep_deeps=KEEP_DEEPS):
     """產生清理計畫。dry-run 與 --apply 共用這一份邏輯。"""
     items = []
-    buckets = {"result": {}, "snapshot": {}, "probe": [], "deep": [], "screenshot": []}
+    buckets = {"result": {}, "snapshot": {}, "probe": [], "deep": [],
+               "screenshot": [], "automation": [], "automation_log": []}
     unsafe = []
 
     for path in _walk(root):
@@ -235,8 +252,8 @@ def build_plan(root, keep_results=KEEP_RESULTS, keep_snapshots=KEEP_SNAPSHOTS,
             buckets["result"].setdefault(stamp, []).append((path, size, extra))
         elif category == "snapshot":
             buckets["snapshot"].setdefault(extra, []).append((path, size, stamp))
-        elif category in ("probe", "deep"):
-            buckets[category].append((path, size, stamp))
+        elif category in ("probe", "deep", "automation", "automation_log"):
+            buckets.setdefault(category, []).append((path, size, stamp))
         elif category == "screenshot":
             buckets["screenshot"].append((path, size, mtime))
 
@@ -297,6 +314,33 @@ def build_plan(root, keep_results=KEEP_RESULTS, keep_snapshots=KEEP_SNAPSHOTS,
                 items.append(Item(path, "snapshot", stamp, size, DELETE,
                                   "name=%s 超出最近 %d 份（第 %d 新）"
                                   % (name, keep_snapshots, idx + 1)))
+
+    # ---------------- automation：有新 Regression 的永遠保留 ----------------
+    failed_stamps = set()
+    for path, _size, stamp in buckets.get("automation", []):
+        if not path.lower().endswith(".json"):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("exit_code") not in (0, None) or data.get("new_fail"):
+                failed_stamps.add(stamp)
+        except Exception:
+            failed_stamps.add(stamp)      # 讀不到就保守保留
+
+    for cat in ("automation", "automation_log"):
+        rows = buckets.get(cat, [])
+        rows.sort(key=lambda r: r[2], reverse=True)
+        for idx, (path, size, stamp) in enumerate(rows):
+            if stamp in failed_stamps:
+                items.append(Item(path, cat, stamp, size, KEEP,
+                                  "此次自動 Regression 有新 Regression / 異常，永久保留"))
+            elif idx < KEEP_AUTOMATION:
+                items.append(Item(path, cat, stamp, size, KEEP,
+                                  "最近 %d 份之內（第 %d 新）" % (KEEP_AUTOMATION, idx + 1)))
+            else:
+                items.append(Item(path, cat, stamp, size, DELETE,
+                                  "超出最近 %d 份（第 %d 新）" % (KEEP_AUTOMATION, idx + 1)))
 
     # ---------------- probe / deep ----------------
     for cat, keep_n in (("probe", keep_probes), ("deep", keep_deeps)):

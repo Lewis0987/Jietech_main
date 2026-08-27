@@ -21,6 +21,8 @@
 - Safety L1 破壞性功能保護
 - Recovery 自動回到穩定頁面
 - Stability / Flaky 驗證（連續多輪 Regression 比對）
+- 自動 Regression：Baseline 逐 Case 比對、Known Fail 判定、明確 Exit Code
+  （**Regression Automation Ready / Scheduled Deployment Validated / Automatic Schedule Currently Disabled**）
 
 ---
 
@@ -58,10 +60,15 @@ D:\Jietech
     │   ├─ earn_flow.py       # [K] EARN / Team Club
     │   └─ subordinate_flow.py # [L] Subordinate Data 查詢
     │
+    ├─ baseline/              # Regression Baseline（人工維護，不自動更新）
+    │   └─ regression_baseline.json
+    ├─ run_scheduled_regression.bat  # Windows 排程入口（尚未註冊排程）
+    │
     ├─ tools/                 # 測試產物維護
     │   ├─ cleanup_output.py  # Output Retention 清理（預設 dry-run）
     │   ├─ safety_audit.py    # 測試結果安全稽核（語意判斷，非關鍵字比對）
-    │   └─ stability_runner.py # Stability / Flaky 驗證（連續執行既有 Regression）
+    │   ├─ stability_runner.py # Stability / Flaky 驗證（連續執行既有 Regression）
+    │   └─ scheduled_regression.py # 自動 Regression：Baseline 比對 + Safety + Summary
     │
     ├─ probe/                 # DOM 唯讀探查
     │   ├─ dom_probe.py       # 全站元素盤點 / Banner 輪播取樣 / Popup 佇列快照
@@ -73,7 +80,8 @@ D:\Jietech
         ├─ result_<ts>.json
         ├─ screenshots/       # FAIL 截圖
         ├─ probe/             # DOM Snapshot 與探查結果
-        └─ stability/         # Stability 報告（一律保留，不清理）
+        ├─ stability/         # Stability 報告（一律保留，不清理）
+        └─ automation/        # 自動 Regression Summary + logs/
 ```
 
 - `common/` — Driver / Wait / Popup / Download / Result / Recovery / DOM 等共用工具
@@ -385,6 +393,8 @@ python -m tools.cleanup_output --keep-results 30 --keep-snapshots 5
 | 產物 | 命名 | 保留 |
 |---|---|---|
 | result CSV / JSON | `result_<ts>.csv` / `.json` | 最近 **20** 次 execution |
+| Automation Summary | `automation/automation_<ts>.*`、`automation/logs/scheduled_<ts>.log` | 最近 **30** 份；**有新 Regression 的永久保留** |
+| Stability 報告 | `stability/stability_<ts>.*` | **一律保留**，不參與清理 |
 | FAIL 截圖 | `screenshots/FAIL_<caseid>_<HHMMSS>.png` | 與所屬 execution 連動（見下） |
 | DOM Snapshot | `probe/snapshot_<name>_<ts>.json` | 每個 `<name>` 最近 **3** 份 |
 | dom_probe | `probe/probe_<ts>.json` | 最近 **5** 份 |
@@ -453,6 +463,40 @@ swiper 的 class 中發現 `min-h-max]`（多一個右中括號），
 > 同樣只是疑似原因，**未經前端修改前後驗證，不得視為已確認 Root Cause**。
 
 因此 `I-00` 維持 FAIL，`I-01`～`I-10` SKIP 並附上各自的實測證據。
+
+### Interactive-only Task 在主機睡眠時無法保證準時執行
+
+**這是排程環境限制，不是 Test Regression。**
+
+正式 Task 的 Logon Mode 是 `Interactive only`（僅登入時執行），
+當主機處於 Sleep / Modern Standby 時，排程**不保證於原定時間啟動**。
+
+2026/08/27 實際發生：
+
+| 時間 | 事件 | 證據 |
+|---|---|---|
+| 08:30 | 排程時間到，**未執行** | 主機處於 Modern Standby |
+| 08:53:14 | 系統從低耗電狀態恢復 | Kernel-Power **507** + **566** |
+| 08:53:12 | Task Scheduler 補跑 | `LastRunTime` |
+| ~08:55 | 行程被終止（約 90 秒後） | `LastTaskResult = 0xC000013A`（`STATUS_CONTROL_C_EXIT`） |
+
+分類：**SCHEDULER / ENVIRONMENT FAILURE**
+—— 不是 Regression Failure、不是 Safety Failure、不是 Flaky Test。
+因此**未**修改任何 Flow、Selenium timeout、retry 或 Baseline。
+
+中斷後環境是乾淨的：無殘存 chromedriver / chrome 行程、
+Downloads 殘留 0、未產生半成品 result / summary、Baseline 未被動到。
+
+**技術評估已完成但依需求未啟用**：
+
+- 本機為 **Modern Standby (S0)** 機型（S1/S2/S3 皆不支援）
+- Power Plan 的 `Allow wake timers`：**AC = 啟用**、DC = 停用
+- `WakeToRun` / `StartWhenAvailable` 可設定且已驗證可寫入，
+  但因目前沒有「睡眠中自動喚醒跑測試」的需求，正式 Task 已**還原為 `False`**
+
+若日後需要每日自動執行，建議順序：
+重新 Enable Task → 視情況開啟 `WakeToRun` / `StartWhenAvailable` →
+實測一次 Sleep → Wake → Full Regression。
 
 ### 其他已記錄但非缺陷的項目
 
@@ -551,7 +595,197 @@ Downloads 殘留: 0
 
 ---
 
-## 10. Regression Baseline
+## 10. Scheduled / CI Regression
+
+> **目前狀態**
+> - **Regression Automation Ready** —— 自動化能力已完成
+> - **Scheduled Deployment Validated** —— Windows Task Scheduler 部署與
+>   Lock Screen 無人操作執行皆已實測通過
+> - **Automatic Schedule Currently Disabled** —— 因目前沒有每日自動 Regression 的
+>   實際需求，正式 Task 已**停用（Disable，未刪除）**，需要時可直接重新 Enable
+>
+> Sleep / Modern Standby 喚醒執行與長期 Scheduled Stability 觀察
+> 因目前無實際需求而**暫緩（Deferred）**，非技術失敗。
+
+`tools/scheduled_regression.py` 是自動化的**編排層**，不重複實作任何 Case：
+
+```
+Headless full_site_test.py  →  取得 result JSON  →  Safety Audit
+      →  Baseline 逐 Case 比對  →  Download 殘留檢查
+      →  Automation Summary  →  Exit Code
+```
+
+### Raw Result 與 Automation Status 是兩件事
+
+這是本設計最重要的一點。`C-00` / `I-00` 是已知網站缺陷，
+因此 CI **不能**用 `raw FAIL > 0 → pipeline FAIL` 這種判定。
+
+| 概念 | 內容 |
+|---|---|
+| **Raw Result** | `135 / 104 PASS / 2 FAIL / 29 SKIP` —— 原始事實，**絕不篡改** |
+| **Baseline Comparison** | `C-00` / `I-00` 屬 KNOWN STABLE FAIL，不算新問題 |
+| **Final Automation Status** | `PASS（No New Regression）` |
+
+Reporter 不會被改成假裝 135 全 PASS，`result_*.json` 永遠保留真實的 FAIL。
+
+### Baseline
+
+`test/baseline/regression_baseline.json`，逐 Case 記錄 **Expected Status**
+（135 個 Case），而不是只存 `104 / 2 / 29` 這種總數——
+只比總數會漏掉「一個 PASS 變 FAIL、另一個 FAIL 剛好變 PASS」的情形。
+
+**Baseline 絕不自動更新。** 自動 Regression 只會讀取它；
+要更新必須人工明確執行：
+
+```bash
+python -m tools.scheduled_regression --init-baseline
+```
+
+### 比較分類
+
+| 分類 | 意義 | 影響 CI |
+|---|---|---|
+| `EXPECTED PASS` / `EXPECTED SKIP` | 與 Baseline 相同 | 否 |
+| `EXPECTED FAIL` | **KNOWN STABLE FAIL**（C-00 / I-00） | 否 |
+| `NEW FAIL` | Baseline 非 FAIL，本次 FAIL | **是** |
+| `MISSING CASE` | Baseline 有但本次沒跑到 | **是** |
+| `NEW SKIP` | PASS 變 SKIP，覆蓋率下降 | 否（警告） |
+| `RECOVERED` | Known Fail 變 PASS，網站可能已修好 | 否（提醒人工更新 Baseline） |
+| `STATUS CHANGED` | 其他狀態轉換 | 否（警告） |
+| `NEW CASE` | 新增的 Case | 否（提醒人工更新 Baseline） |
+
+### Exit Code 契約
+
+| Code | 意義 |
+|---|---|
+| `0` | 無新 Regression、Safety Audit PASS、Runner 正常 |
+| `1` | 出現 `NEW FAIL` / `MISSING CASE` / Safety violation |
+| `2` | Runner / Browser / Result 解析失敗 |
+
+**Safety violation 一律讓最終結果 FAIL**，不論 Baseline 比對是否正常。
+
+### 執行方式
+
+```bash
+# 正式自動 Regression（Headless）
+python -m tools.scheduled_regression
+
+# 人工建立 / 更新 Baseline
+python -m tools.scheduled_regression --init-baseline
+
+# 只比對既有結果，不重跑測試（Debug 用）
+python -m tools.scheduled_regression --from-result output/result_<ts>.json
+
+# Windows 排程入口（固定工作目錄 / 絕對路徑 Python / UTF-8 / 落 log）
+test
+un_scheduled_regression.bat
+```
+
+正式自動 Regression **預設 Headless**（Phase 11 已證明 6 輪 Headed/Headless 結果一致），
+單輪約 6~7 分鐘。Headed 保留給人工 Debug、新 Case 開發、UI 問題確認。
+
+### Windows Scheduled Task
+
+| 項目 | 實際設定 |
+|---|---|
+| Task Name | `Jietech Regression` |
+| Task To Run | `D:\Jietech	est
+un_scheduled_regression.bat` |
+| Schedule | Daily 08:30（`Every 1 day(s)`） |
+| Run As User | `Water` |
+| Logon Mode | **Interactive only**（XML `LogonType=InteractiveToken`） |
+| Highest Privileges | **OFF**（XML 無 `RunLevel` → LeastPrivilege） |
+| Working Directory | 由 BAT 內 `cd /d` 保證，不依賴排程器的 `Start In` |
+| **目前 Enabled** | **False（已停用，Task 本身保留）** |
+| WakeToRun | `False`（技術評估完成，依需求未啟用） |
+| StartWhenAvailable | `False`（技術評估完成，依需求未啟用） |
+| DisallowStartIfOnBatteries / StopIfGoingOnBatteries | `True` / `True`（維持 Windows 預設） |
+
+需要重新啟用時：
+
+```
+schtasks /Change /TN "Jietech Regression" /ENABLE
+```
+
+Task 定義、BAT、Baseline 與所有驗證成果都完整保留，重新啟用不需重建。
+
+建立指令：
+
+```
+schtasks /Create /TN "Jietech Regression" /TR "D:\Jietech	est
+un_scheduled_regression.bat" ^
+         /SC DAILY /ST 08:30 /RU Water /IT /F
+```
+
+`/IT` 是關鍵 —— 單純省略 `/RU` **並不保證**等同「僅登入時執行」，
+建立後必須用 `/V /FO LIST` 與 `/XML` 讀回確認。
+
+**`run_scheduled_regression.bat` 的兩個 Windows 實作重點**
+
+1. **必須是純 ASCII**。cmd.exe 用 OEM code page（本機 cp950）解析 `.bat`，
+   UTF-8 中文寫在 `echo` / `REM` 內會造成語法錯誤。
+   Python 輸出的中文靠 `PYTHONUTF8=1` 正常寫進 log，不受影響。
+2. **不能用 `wmic`**。Windows 11 已移除 `wmic`（實測 `wmic NOT FOUND`），
+   原本用它取時間戳會得到空字串。已改用
+   `powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"`，
+   並保留 `%DATE%/%TIME%` 後備。
+
+Exit code 以 `endlocal & exit /b %RC%` 傳出，實測 0 / 1 / 2 / 5 都原樣傳給
+Task Scheduler 的 **Last Result**。
+
+### Unattended / Lock Screen 驗證
+
+| 驗證項目 | 結果 |
+|---|---|
+| 不開 VS Code、不開 CMD、無人工操作 | ✅ 由 Task Scheduler 自行啟動 |
+| Windows **鎖定畫面**下由排程自行觸發 | ✅ 10:51 觸發，10:57 完成 |
+| Headless 自行建立 / 關閉 Driver | ✅ |
+| 不依賴 Terminal 工作目錄 | ✅ BAT 自行 `cd /d` |
+| Task Last Result 反映 Exit Code | ✅ `0` |
+
+Lock Screen 實測結果：
+`Raw 135 / 104 / 2 / 29`、Known Fail `C-00` `I-00`、New Fail `0`、
+Safety `PASS`、Download 殘留 `0`、Final `PASS`、Exit Code `0`、耗時 `362.35s`。
+
+> **尚未驗證：使用者完全登出（Logged Off / Session 0）。**
+> 目前 Logon Mode 是 `Interactive only`，登出後排程不會執行。
+> 若日後需要，得改成「不論是否登入」並另行驗證。
+
+### Automation Report
+
+輸出到 `test/output/automation/`：
+
+- `automation_<ts>.json` —— 完整內容（meta / raw result / 比較分類 / 各清單 / safety / download / final status / exit code / 逐 Case）
+- `automation_<ts>.csv` —— 逐 Case（case / expected / actual / classification / elapsed / error / screenshot）
+- `logs/scheduled_<ts>.log` —— `.bat` 執行時的 stdout / stderr
+
+不會覆蓋 `result_*`、`stability_*`。
+
+### Failure Evidence
+
+出現 `NEW FAIL` 時，Automation Summary 會保留 Case ID / Flow / Expected / Actual /
+Error Type / Error Message / Elapsed / **Screenshot 路徑** / result JSON 與 CSV 路徑。
+`cleanup_output.py` 會把**有新 Regression 的那幾份 automation summary 永久保留**。
+
+### Scheduled Run 紀錄
+
+| # | 啟動方式 | 時間 | Raw | New Fail | Safety | 殘留 | Final | Exit | 耗時 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 人工（`python -m`） | 08/26 09:07 | 135/104/2/29 | 0 | PASS | 0 | PASS | 0 | 411.31s |
+| 2 | 人工（走 `.bat`） | 08/26 10:23 | 135/104/2/29 | 0 | PASS | 0 | PASS | 0 | 383.69s |
+| 3 | **Task Scheduler（鎖定畫面）** | 08/26 10:51 | 135/104/2/29 | 0 | PASS | 0 | PASS | 0 | 362.35s |
+
+| 4 | Task Scheduler（每日 08:30） | 08/27 08:53 | — | — | — | — | **SCHEDULER / ENVIRONMENT FAILURE** | 0xC000013A | 中斷 |
+
+第 4 筆為排程環境問題，非測試問題，詳見 Known Issues。
+
+**長期 Scheduled Stability 觀察已暫緩**（正式 Task 現為 Disabled）。
+已驗證的是「Task Scheduler 能在無人操作、螢幕鎖定下完整跑完一輪」，
+而非「連續多日自動執行的穩定性」。
+
+---
+
+## 11. Regression Baseline
 
 最後一次完整 Regression（12 個 flow 全部執行；取 Stability 驗證的最後一輪）：
 
@@ -583,7 +817,7 @@ Result: FAIL
 
 ---
 
-## 11. 開發原則
+## 12. 開發原則
 
 - `IN【V6】.py` 為原始參考腳本，**不直接修改**
 - `URL.ini` **不因自動化重構而修改**
@@ -613,3 +847,5 @@ Result: FAIL
 - Phase 9 既有功能深度補強                                     主要鎖定 /record
 - Phase 10 Search Input                                       Result → Empty → Clear → Recovery 的完整 E2E
 - Phase 11 自動化測試穩定性 / Flaky Test 驗證                   重複、穩定測試
+- Phase 12 CI / 排程式自動 Regression                          自動排程Regression
+- Phase 13 正式排程上線與無人值守驗證 --暫停開發                 每日排程summary --暫停開發
