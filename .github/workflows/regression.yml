@@ -1,0 +1,110 @@
+name: Jietech Regression
+
+# 第一版只做手動觸發。
+# 待 workflow_dispatch 連續成功 2~3 次且結果一致後，再評估是否需要其他觸發方式。
+# 刻意不加入 schedule / push / pull_request —— Phase 13 已確認長期排程目前無需求。
+on:
+  workflow_dispatch:
+    inputs:
+      flows:
+        description: "要執行的 flow（逗號分隔），預設全部 12 個"
+        required: false
+        default: "popup,header,banner,menu,safety,mine,account,record,promo,task,earn,subordinate"
+
+# 同時只跑一個，避免兩個 run 同時操作同一個測試站台
+concurrency:
+  group: jietech-regression
+  cancel-in-progress: false
+
+jobs:
+  regression:
+    # 測試本體在 Windows 上開發並驗證（下載路徑、Chrome、檔案處理）
+    # 第一版只做 windows-latest，不同時嘗試 ubuntu / macOS
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        # 所有 step 都在 test/ 下執行，等同本機的工作目錄
+        working-directory: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          # 與本機驗證環境同系列（本機 3.14.3；setup-python 提供 3.14.7）
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip list
+
+      - name: Environment info
+        run: |
+          python --version
+          python -c "import selenium, colorama; print('selenium', selenium.__version__); print('colorama', colorama.__version__)"
+          python -c "from pathlib import Path; print('home        :', Path.home()); print('downloads   :', Path.home() / 'Downloads')"
+          python -c "import config; print(config.summary()); print('URL:', config.read_url())"
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Chrome version (provided by windows-latest image)
+        shell: pwsh
+        run: |
+          $paths = @(
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+          )
+          $found = $false
+          foreach ($p in $paths) {
+            if (Test-Path $p) {
+              $found = $true
+              "Chrome found: $p"
+              (Get-Item $p).VersionInfo.ProductVersion
+            }
+          }
+          if (-not $found) { "Chrome NOT found in standard locations"; exit 1 }
+
+      # 正式入口：與 Windows Task Scheduler、人工執行完全共用同一個 Automation Runner。
+      # 不另外拼 full_site_test.py 指令，也不建立 ci_regression.py。
+      #
+      # Exit code 契約（tools/scheduled_regression.py）：
+      #   0 = 沒有新的 Regression、Safety Audit PASS
+      #   1 = NEW FAIL / MISSING CASE / Safety violation
+      #   2 = Runner / Browser / Result 解析失敗
+      #
+      # 注意：Raw Result 一定會有 FAIL=2（C-00 / I-00 為 Known Stable Fail），
+      # 因此 CI 判定看的是這個 exit code，不是 raw FAIL 數量。
+      - name: Run headless regression (baseline compare + safety audit)
+        id: regression
+        run: python -m tools.scheduled_regression --flows "${{ inputs.flows }}"
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+
+      - name: Write GitHub Step Summary
+        if: always()
+        shell: pwsh
+        run: python tools/ci_summary.py >> $env:GITHUB_STEP_SUMMARY
+        env:
+          PYTHONUTF8: "1"
+
+      # 即使 Regression FAIL 也一定要上傳 —— FAIL 時的截圖與 JSON 才是最需要的。
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jietech-regression-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            test/output/automation/
+            test/output/result_*.json
+            test/output/result_*.csv
+            test/output/screenshots/
+            test/output/probe/

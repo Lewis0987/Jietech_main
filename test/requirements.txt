@@ -1,0 +1,17 @@
+# Jietech 全站自動化測試 —— Regression 執行所需的第三方套件
+#
+# 只列出目前 Regression code 實際 import 的第三方套件：
+#   test/full_site_test.py, test/config.py,
+#   test/common/, test/flows/, test/probe/, test/tools/
+#
+# 刻意不包含：
+#   * Python 標準庫（os / json / csv / re / configparser / winreg ...）
+#   * 舊參考腳本 IN【V6】.py 才用到、但 Regression 完全沒用到的套件
+#     （例如 pyperclip）——不因舊程式有 import 就塞進來
+#   * chromedriver：由 Selenium Manager 於執行時自動取得，不釘版本、不進版控
+#
+# 本機驗證環境：Python 3.14.3 / Windows 11
+# CI 目標環境  ：windows-latest + actions/setup-python 3.14
+
+selenium==4.41.0
+colorama==0.4.6
