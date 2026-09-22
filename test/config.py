@@ -16,6 +16,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent          # ...\Jietech\test
 URL_INI = BASE_DIR / "URL.ini"
 OUTPUT_DIR = BASE_DIR / "output"
+RESULT_DIR = OUTPUT_DIR / "result"      # 一般 Regression 的 result_<ts>.csv / .json
 SCREENSHOT_DIR = OUTPUT_DIR / "screenshots"
 PROBE_DIR = OUTPUT_DIR / "probe"
 
@@ -92,7 +93,7 @@ def assert_safe(product: str = None, safe_level: int = None) -> None:
 
 
 def ensure_dirs() -> None:
-    for d in (OUTPUT_DIR, SCREENSHOT_DIR, PROBE_DIR):
+    for d in (OUTPUT_DIR, RESULT_DIR, SCREENSHOT_DIR, PROBE_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -112,6 +113,7 @@ def summary() -> str:
         f"TARGET         : {UI_VERSION}/{PRODUCT}\n"
         f"DOWNLOAD_PATH  : {DOWNLOAD_PATH} (exists={Path(DOWNLOAD_PATH).exists()})\n"
         f"OUTPUT_DIR     : {OUTPUT_DIR}\n"
+        f"RESULT_DIR     : {RESULT_DIR}\n"
         f"SAFE_LEVEL     : {SAFE_LEVEL}\n"
         f"IS_PRODUCTION  : {is_production()}"
     )

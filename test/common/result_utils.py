@@ -128,13 +128,18 @@ class Reporter:
                   "duration_s", "error_type", "error_msg", "screenshot", "steps"]
 
     def __init__(self, title="FULL SITE AUTOMATION TEST",
-                 output_dir=None, screenshot_dir=None, run_id=None):
+                 output_dir=None, screenshot_dir=None, run_id=None,
+                 result_dir=None):
         self.title = title
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         base = Path(output_dir) if output_dir else Path(__file__).resolve().parent.parent / "output"
         self.output_dir = Path(base)
+        # result_<ts>.csv / .json 落在 output/result/；
+        # screenshots / probe / automation / stability 一律維持在 output/ 下的原位置。
+        self.result_dir = Path(result_dir) if result_dir else self.output_dir / "result"
         self.screenshot_dir = Path(screenshot_dir) if screenshot_dir else self.output_dir / "screenshots"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.result_dir.mkdir(parents=True, exist_ok=True)
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         self.results = []
@@ -261,7 +266,7 @@ class Reporter:
 
     # ------------------------------------------------------------ 落檔
     def write_csv(self):
-        path = self.output_dir / ("result_%s.csv" % self.run_id)
+        path = self.result_dir / ("result_%s.csv" % self.run_id)
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(f, fieldnames=self.CSV_FIELDS)
             w.writeheader()
@@ -270,7 +275,7 @@ class Reporter:
         return path
 
     def write_json(self):
-        path = self.output_dir / ("result_%s.json" % self.run_id)
+        path = self.result_dir / ("result_%s.json" % self.run_id)
         payload = {
             "title": self.title,
             "run_id": self.run_id,

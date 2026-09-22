@@ -6,7 +6,8 @@
     只有明確加上 --apply 才會真的刪除。
 
 保留規則：
-    result_<ts>.csv / result_<ts>.json     保留最近 20 次 execution
+    result/result_<ts>.csv / .json         保留最近 20 次 execution
+                                           （output/ 根目錄的舊版位置同樣納管）
     screenshots/FAIL_*.png                 與所屬 execution 關聯處理（見下）
     probe/snapshot_<name>_<ts>.json        每個 name 保留最近 3 份
     probe/probe_<ts>.json                  保留最近 5 份
@@ -153,7 +154,9 @@ def _classify(root, path):
     if name in PROTECTED_NAMES:
         return "protected", None, None
 
-    if rel_dir == ".":
+    # result_<ts>.csv / .json 現行位置為 output/result/；
+    # output/ 根目錄是舊版位置，仍需認得，否則既有舊檔會變成 UNKNOWN 而永不納管。
+    if rel_dir in (".", "result"):
         m = RE_RESULT.match(name)
         if m:
             return "result", m.group(1), m.group(2)

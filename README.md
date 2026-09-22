@@ -76,8 +76,9 @@ D:\Jietech
     │                         #   /subordinateData 可互動元素深度探查
     │
     └─ output/                # 測試產物（已加入 .gitignore）
-        ├─ result_<ts>.csv
-        ├─ result_<ts>.json
+        ├─ result/            # 一般 Regression Result
+        │   ├─ result_<ts>.csv
+        │   └─ result_<ts>.json
         ├─ screenshots/       # FAIL 截圖
         ├─ probe/             # DOM Snapshot 與探查結果
         ├─ stability/         # Stability 報告（一律保留，不清理）
@@ -357,8 +358,8 @@ python -m tools.cleanup_output          # 產物清理 dry-run（預設不刪除
 
 | 產物 | 內容 |
 |---|---|
-| `result_<timestamp>.csv` | Timestamp / Group / Case ID / 名稱 / 狀態 / 執行時間 / 錯誤類型 / 錯誤訊息 / 截圖路徑 / 驗證步驟 |
-| `result_<timestamp>.json` | 同上，另含 meta（瀏覽器版本、目標環境、下載路徑）與統計摘要 |
+| `result/result_<timestamp>.csv` | Timestamp / Group / Case ID / 名稱 / 狀態 / 執行時間 / 錯誤類型 / 錯誤訊息 / 截圖路徑 / 驗證步驟 |
+| `result/result_<timestamp>.json` | 同上，另含 meta（瀏覽器版本、目標環境、下載路徑）與統計摘要 |
 | `screenshots/FAIL_<caseid>_<time>.png` | FAIL 時自動截圖 |
 | `probe/snapshot_*.json` | 內頁 DOM Snapshot |
 | `probe/deep_*.json`、`probe/probe_*.json` | DOM 探查結果 |
@@ -392,7 +393,7 @@ python -m tools.cleanup_output --keep-results 30 --keep-snapshots 5
 
 | 產物 | 命名 | 保留 |
 |---|---|---|
-| result CSV / JSON | `result_<ts>.csv` / `.json` | 最近 **20** 次 execution |
+| result CSV / JSON | `result/result_<ts>.csv` / `.json` | 最近 **20** 次 execution |
 | Automation Summary | `automation/automation_<ts>.*`、`automation/logs/scheduled_<ts>.log` | 最近 **30** 份；**有新 Regression 的永久保留** |
 | Stability 報告 | `stability/stability_<ts>.*` | **一律保留**，不參與清理 |
 | FAIL 截圖 | `screenshots/FAIL_<caseid>_<HHMMSS>.png` | 與所屬 execution 連動（見下） |
@@ -677,7 +678,7 @@ python -m tools.scheduled_regression
 python -m tools.scheduled_regression --init-baseline
 
 # 只比對既有結果，不重跑測試（Debug 用）
-python -m tools.scheduled_regression --from-result output/result_<ts>.json
+python -m tools.scheduled_regression --from-result output/result/result_<ts>.json
 
 # Windows 排程入口（固定工作目錄 / 絕對路徑 Python / UTF-8 / 落 log）
 test
@@ -878,6 +879,9 @@ Run #1 內容（已逐檔唯讀核對）：
 | `probe/` | 20 | 唯讀 DOM snapshot |
 
 **截圖只有 2 張，正好對應 C-00 / I-00** —— 這本身就是「沒有其他 Case 失敗」的旁證。
+
+> 上表是 Run #1 當下的實際內容。之後 result CSV / JSON 改為輸出到 `output/result/`，
+> Artifact 內對應的路徑會是 `result/result_<ts>.json` / `.csv`（其餘分類不變）。
 
 Artifact 內**不含**帳號、密碼、token、cookie、Authorization、電話或 email。
 （`Login password` 是頁面標籤，該測試帳號的實際狀態為 `No set`。）

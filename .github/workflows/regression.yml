@@ -104,7 +104,6 @@ jobs:
           if-no-files-found: warn
           path: |
             test/output/automation/
-            test/output/result_*.json
-            test/output/result_*.csv
+            test/output/result/
             test/output/screenshots/
             test/output/probe/

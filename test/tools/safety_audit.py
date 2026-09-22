@@ -22,7 +22,7 @@
 用法：
     python -m tools.safety_audit                 # 稽核最新一份 result JSON
     python -m tools.safety_audit --last 3        # 稽核最近 3 份
-    python -m tools.safety_audit --file output/result_20260825_145253.json
+    python -m tools.safety_audit --file output/result/result_20260825_145253.json
 """
 
 import argparse
@@ -251,8 +251,14 @@ def main(argv=None):
     if args.file:
         files = [args.file]
     else:
-        pattern = os.path.join(str(config.OUTPUT_DIR), "result_*.json")
-        files = sorted(glob.glob(pattern))[-max(1, args.last):]
+        # 現行位置 output/result/；同時相容仍留在 output/ 根目錄的既有舊檔。
+        patterns = [os.path.join(str(config.RESULT_DIR), "result_*.json"),
+                    os.path.join(str(config.OUTPUT_DIR), "result_*.json")]
+        found = set()
+        for pattern in patterns:
+            found.update(glob.glob(pattern))
+        # 檔名帶 timestamp，依 basename 排序即為時間序（跨新舊目錄仍正確）
+        files = sorted(found, key=os.path.basename)[-max(1, args.last):]
     if not files:
         print("找不到任何 result JSON")
         return 2
